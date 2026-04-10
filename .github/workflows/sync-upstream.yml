@@ -23,9 +23,10 @@ jobs:
           git fetch upstream
           # Reset (or create) the upstream-sync branch to exactly upstream/main
           git checkout -B upstream-sync upstream/main
-          # Restore our own .github/ so we never push workflow changes
-          # (GITHUB_TOKEN lacks the workflows permission to do so)
-          git checkout origin/main -- .github || true
+          # Remove ALL .github/ content from upstream (e.g. their own workflow files)
+          # then restore only our .github/ — prevents the "workflows permission" push error
+          git rm -rf .github/
+          git checkout origin/main -- .github/
           git diff --cached --quiet || git commit -m "chore: restore .github from main"
           git push origin upstream-sync --force
 

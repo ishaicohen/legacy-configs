@@ -54,6 +54,7 @@ jobs:
           fi
           # Create the PR, or do nothing if it already exists
           gh pr create \
+            --repo "$GITHUB_REPOSITORY" \
             --base main \
             --head upstream-sync \
             --title "chore: sync upstream Oksii/legacy-configs" \

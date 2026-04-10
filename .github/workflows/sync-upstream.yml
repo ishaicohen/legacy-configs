@@ -1,0 +1,45 @@
+name: Sync upstream
+
+on:
+  schedule:
+    # Runs every day at 06:00 UTC — adjust as needed
+    - cron: '0 6 * * *'
+  workflow_dispatch: # allow manual trigger from GitHub Actions UI
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Fetch upstream and push sync branch
+        run: |
+          git remote add upstream https://github.com/Oksii/legacy-configs.git
+          git fetch upstream
+          # Reset (or create) the upstream-sync branch to exactly upstream/main
+          git checkout -B upstream-sync upstream/main
+          git push origin upstream-sync --force
+
+      - name: Open PR if upstream has new commits
+        run: |
+          # Count commits upstream has that main doesn't
+          NEW=$(git log origin/main..upstream/main --oneline | wc -l)
+          if [ "$NEW" -eq "0" ]; then
+            echo "Already up to date, no PR needed."
+            exit 0
+          fi
+          # Create the PR, or do nothing if it already exists
+          gh pr create \
+            --base main \
+            --head upstream-sync \
+            --title "chore: sync upstream Oksii/legacy-configs" \
+            --body "Automated sync from [Oksii/legacy-configs](https://github.com/Oksii/legacy-configs).
+
+          Review the diff and merge only what you want to keep.
+          If there are conflicts, resolve them in favour of your customisations." \
+          || echo "PR already open, skipping."
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -27,8 +27,11 @@ jobs:
           # upstream's raw commits (which contain their workflow files).
           git checkout -B upstream-sync origin/main
 
-          # Merge upstream changes without committing yet
-          git merge upstream/main --no-commit --no-ff --allow-unrelated-histories || true
+          # Merge upstream changes without committing yet.
+          # -Xtheirs: auto-resolve conflicts by taking upstream's version.
+          # Our custom files (configs/public.config, docker-compose.yml, etc.)
+          # don't exist in upstream so they are never overwritten.
+          git merge upstream/main --no-commit --no-ff --allow-unrelated-histories -Xtheirs || true
 
           # Wipe any .github/ that came from upstream, restore only ours
           git rm -rf .github/ 2>/dev/null || true

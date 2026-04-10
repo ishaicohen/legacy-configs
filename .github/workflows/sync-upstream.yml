@@ -21,6 +21,10 @@ jobs:
           git fetch upstream
           # Reset (or create) the upstream-sync branch to exactly upstream/main
           git checkout -B upstream-sync upstream/main
+          # Restore our own .github/ so we never push workflow changes
+          # (GITHUB_TOKEN lacks the workflows permission to do so)
+          git checkout origin/main -- .github || true
+          git diff --cached --quiet || git commit -m "chore: restore .github from main"
           git push origin upstream-sync --force
 
       - name: Open PR if upstream has new commits

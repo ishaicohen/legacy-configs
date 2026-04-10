@@ -21,13 +21,21 @@ jobs:
           git config user.name "github-actions[bot]"
           git remote add upstream https://github.com/Oksii/legacy-configs.git
           git fetch upstream
-          # Reset (or create) the upstream-sync branch to exactly upstream/main
-          git checkout -B upstream-sync upstream/main
-          # Remove ALL .github/ content from upstream (e.g. their own workflow files)
-          # then restore only our .github/ — prevents the "workflows permission" push error
-          git rm -rf .github/
+
+          # Base the sync branch on OUR main, not upstream/main.
+          # This means only one new commit is pushed — GitHub won't see
+          # upstream's raw commits (which contain their workflow files).
+          git checkout -B upstream-sync origin/main
+
+          # Merge upstream changes without committing yet
+          git merge upstream/main --no-commit --no-ff --allow-unrelated-histories || true
+
+          # Wipe any .github/ that came from upstream, restore only ours
+          git rm -rf .github/ 2>/dev/null || true
           git checkout origin/main -- .github/
-          git diff --cached --quiet || git commit -m "chore: restore .github from main"
+
+          git diff --cached --quiet && echo "Already up to date." && exit 0
+          git commit -m "chore: sync upstream changes"
           git push origin upstream-sync --force
 
       - name: Open PR if upstream has new commits

@@ -42,7 +42,7 @@ services:
       - 'CF_TEAM_LOCK=false'
       - 'CF_TECH_PAUSE=false'
       - 'CF_GUID_BLOCKER=false'
-      - 'MAPS=radar:fueldump:sw_goldrush_te:sw_oasis_b3:et_beach:etl_supply_v14:etl_frostbite_v18:etl_adlernest:braundorf_b4:etl_ice_v12:tc_base:bremen_b3:railgun'
+      - 'MAPS=radar:fueldump:sw_goldrush_te:sw_oasis_b3:et_beach:etl_supply_v14:etl_frostbite_v18:etl_adlernest:braundorf_b4:etl_ice:tc_base:bremen_b3:railgun'
       - 'SETTINGSURL=https://github.com/ishaicohen/legacy-configs.git'
       - 'SETTINGSBRANCH=main'
       - 'STATS_SUBMIT=false'

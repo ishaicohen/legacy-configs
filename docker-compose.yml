@@ -36,7 +36,7 @@ services:
       - 'PASSWORD=${PASSWORD}'
       - 'MAXCLIENTS=64'
       - 'STARTMAP=etl_supply'
-      - 'OMNIBOT=0'
+      - 'OMNIBOT=1'
       - 'SERVERCONF=public'
       - 'CF_DEFAULT_CLASS=false'
       - 'CF_TEAM_LOCK=false'

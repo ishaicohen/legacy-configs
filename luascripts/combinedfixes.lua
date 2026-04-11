@@ -497,15 +497,52 @@ local function botManager_runFrame(levelTime)
     if not ENABLE_BOT_MANAGER then return end
     if levelTime - _botManager_mapStart < BOT_MANAGER_GRACE then return end
 
-    -- First tick after grace period: reset min/max to full target.
-    -- Omnibot is fully initialised by now and will accept these commands.
+    -- First tick after grace period: Omnibot is fully loaded.
     if not _botManager_reset then
         _botManager_reset = true
+
+        -- bot skill must fire after Omnibot loads; map default fires too early.
+        et.trap_SendConsoleCommand(et.EXEC_APPEND, "bot skill 2\n")
+
+        -- Reset min/max to full target unconditionally.
         et.trap_SendConsoleCommand(et.EXEC_APPEND, string.format("bot minbots %d\n", BOT_MANAGER_TARGET))
         et.trap_SendConsoleCommand(et.EXEC_APPEND, string.format("bot maxbots %d\n", BOT_MANAGER_TARGET))
-        log(string.format("BOT_MANAGER post-grace reset: minbots/maxbots=%d", BOT_MANAGER_TARGET))
+
+        -- Count bots to detect a short count left over from the previous map.
+        local maxClients  = tonumber(et.trap_Cvar_Get("sv_maxClients")) or 32
+        local totalBots   = 0
+        local totalHumans = 0
+        local firstBot    = nil
+        for clientNum = 0, maxClients - 1 do
+            local cs = et.trap_GetConfigstring(et.CS_PLAYERS + clientNum)
+            if cs and cs ~= "" then
+                local team = tonumber(et.gentity_get(clientNum, "sess.sessionTeam"))
+                if team == TEAM_AXIS or team == TEAM_ALLIES then
+                    if isBotSlot(clientNum) then
+                        totalBots = totalBots + 1
+                        if not firstBot then firstBot = clientNum end
+                    else
+                        totalHumans = totalHumans + 1
+                    end
+                end
+            end
+        end
+
+        log(string.format("BOT_MANAGER post-grace: skill=2 minbots/maxbots=%d bots=%d humans=%d",
+            BOT_MANAGER_TARGET, totalBots, totalHumans))
+
+        -- Omnibot only refills when triggered by an event (bot disconnect).
+        -- If bot count is short and no humans are playing, kick one bot so
+        -- Omnibot's refill logic fires and brings the count up to minbots.
+        if totalHumans == 0 and firstBot and totalBots < BOT_MANAGER_TARGET then
+            _pendingKicks[firstBot] = true
+            log(string.format("BOT_MANAGER post-grace nudge kick client %d (bots=%d < target=%d)",
+                firstBot, totalBots, BOT_MANAGER_TARGET))
+            et.trap_SendConsoleCommand(et.EXEC_APPEND, string.format("clientkick %d\n", firstBot))
+        end
+
         _botManager_lastCheck = levelTime
-        return  -- let Omnibot spawn/adjust for one interval before we interfere
+        return
     end
 
     if levelTime - _botManager_lastCheck < BOT_MANAGER_INTERVAL then return end

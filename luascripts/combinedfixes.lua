@@ -516,15 +516,14 @@ local function botManager_runFrame(levelTime)
     local desiredAxis   = math.max(0, halfTarget - humansByTeam[TEAM_AXIS])
     local desiredAllies = math.max(0, halfTarget - humansByTeam[TEAM_ALLIES])
     local desiredTotal  = desiredAxis + desiredAllies
+    local totalBots     = #botsByTeam[TEAM_AXIS] + #botsByTeam[TEAM_ALLIES]
 
     log(string.format("BOT_MANAGER allies=%dh+%db axis=%dh+%db desired_bots=%d+%d",
         humansByTeam[TEAM_ALLIES], #botsByTeam[TEAM_ALLIES],
         humansByTeam[TEAM_AXIS],   #botsByTeam[TEAM_AXIS],
         desiredAllies, desiredAxis))
 
-    -- Kick excess bots from over-populated teams first, then raise/lower the
-    -- ceiling.  Omnibot will fill any gap using g_teamForceBalance to pick the
-    -- smaller team for new spawns.
+    -- Kick excess bots from over-populated teams
     for _, team in ipairs({ TEAM_AXIS, TEAM_ALLIES }) do
         local desired = (team == TEAM_AXIS) and desiredAxis or desiredAllies
         local bots    = botsByTeam[team]
@@ -535,7 +534,13 @@ local function botManager_runFrame(levelTime)
         end
     end
 
+    -- Always update the ceiling.
+    -- Only push a floor (minbots) when we need MORE bots; omitting it when
+    -- kicking prevents Omnibot from double-removing a bot in the same frame.
     et.trap_SendConsoleCommand(et.EXEC_APPEND, string.format("bot maxbots %d\n", desiredTotal))
+    if totalBots < desiredTotal then
+        et.trap_SendConsoleCommand(et.EXEC_APPEND, string.format("bot minbots %d\n", desiredTotal))
+    end
 end
 
 function et_InitGame(levelTime, randomSeed, restart)

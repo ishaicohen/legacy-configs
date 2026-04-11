@@ -498,14 +498,19 @@ local function botManager_runFrame(levelTime)
     local desiredAxis   = math.max(0, halfTarget - humansByTeam[TEAM_AXIS])
     local desiredAllies = math.max(0, halfTarget - humansByTeam[TEAM_ALLIES])
 
-    -- Drop excess bots from each team directly so Omnibot can't pick the wrong side
+    -- Drop excess bots from each team using "bot kick <name>" — the proper Omnibot API
     for _, team in ipairs({ TEAM_AXIS, TEAM_ALLIES }) do
         local desired = (team == TEAM_AXIS) and desiredAxis or desiredAllies
         local bots    = botsByTeam[team]
         while #bots > desired do
-            local botNum = table.remove(bots)
+            local botNum  = table.remove(bots)
+            local userinfo = et.trap_GetUserinfo(botNum)
+            local botName  = et.Info_ValueForKey(userinfo, "name")
             _botClients[botNum] = nil
-            et.trap_DropClient(botNum, "", 0)
+            if botName and botName ~= "" then
+                et.trap_SendConsoleCommand(et.EXEC_APPEND, string.format("bot kick %s\n", botName))
+                log(string.format("BOT_MANAGER kicked bot '%s' (client %d, team %d) for balance", botName, botNum, team))
+            end
         end
     end
 

@@ -52,5 +52,5 @@ jobs:
           key: ${{ secrets.VM_SSH_KEY }}
           script: |
             cd /opt/etlegacy
-            docker compose stop enemyterritory-public
-            docker compose up -d enemyterritory-public
+            docker compose stop etl-server-public
+            docker compose up -d etl-server-public

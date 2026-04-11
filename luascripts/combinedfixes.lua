@@ -478,13 +478,40 @@ local function botManager_runFrame(levelTime)
     if levelTime - _botManager_lastCheck < BOT_MANAGER_INTERVAL then return end
     _botManager_lastCheck = levelTime
 
-    local humans = 0
-    for _, isBot in pairs(_botClients) do
-        if not isBot then humans = humans + 1 end
+    -- Count humans and collect bot clientNums per team
+    local humansByTeam = { [TEAM_AXIS] = 0, [TEAM_ALLIES] = 0 }
+    local botsByTeam   = { [TEAM_AXIS] = {}, [TEAM_ALLIES] = {} }
+
+    for clientNum, isBot in pairs(_botClients) do
+        local team = tonumber(et.gentity_get(clientNum, "sess.sessionTeam"))
+        if team == TEAM_AXIS or team == TEAM_ALLIES then
+            if isBot then
+                table.insert(botsByTeam[team], clientNum)
+            else
+                humansByTeam[team] = humansByTeam[team] + 1
+            end
+        end
     end
 
-    local desired = math.max(0, BOT_MANAGER_TARGET - humans)
-    et.trap_SendConsoleCommand(et.EXEC_APPEND, string.format("bot maxbots %d\n", desired))
+    -- Desired bots per team: fill up to half the target, minus humans already on that team
+    local halfTarget    = math.floor(BOT_MANAGER_TARGET / 2)
+    local desiredAxis   = math.max(0, halfTarget - humansByTeam[TEAM_AXIS])
+    local desiredAllies = math.max(0, halfTarget - humansByTeam[TEAM_ALLIES])
+
+    -- Drop excess bots from each team directly so Omnibot can't pick the wrong side
+    for _, team in ipairs({ TEAM_AXIS, TEAM_ALLIES }) do
+        local desired = (team == TEAM_AXIS) and desiredAxis or desiredAllies
+        local bots    = botsByTeam[team]
+        while #bots > desired do
+            local botNum = table.remove(bots)
+            _botClients[botNum] = nil
+            et.trap_DropClient(botNum, "", 0)
+        end
+    end
+
+    -- Tell Omnibot the new ceiling so it adds bots if slots are short
+    local desiredTotal = desiredAxis + desiredAllies
+    et.trap_SendConsoleCommand(et.EXEC_APPEND, string.format("bot maxbots %d\n", desiredTotal))
 end
 
 function et_InitGame(levelTime, randomSeed, restart)

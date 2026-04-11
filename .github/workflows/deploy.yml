@@ -20,6 +20,7 @@ jobs:
           key: ${{ secrets.VM_SSH_KEY }}
           source: docker-compose.yml
           target: /opt/etlegacy/
+          overwrite: true
 
       - name: Restart containers
         uses: appleboy/ssh-action@v1

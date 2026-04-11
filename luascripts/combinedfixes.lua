@@ -454,23 +454,17 @@ end
 -- MODULE: BOT MANAGER
 -- ============================================================
 
-local _botClients         = {}   -- [clientNum] = true(bot) / false(human)
 local _botManager_lastCheck = 0
 local BOT_MANAGER_INTERVAL  = 30000  -- ms between adjustments
+local SVF_BOT               = 8      -- engine flag for bot entities
 
 local function botManager_init()
-    _botClients           = {}
     _botManager_lastCheck = 0
 end
 
-local function botManager_clientConnect(clientNum, isBot)
-    if not ENABLE_BOT_MANAGER then return end
-    _botClients[clientNum] = (isBot == 1)
-end
-
-local function botManager_clientDisconnect(clientNum)
-    if not ENABLE_BOT_MANAGER then return end
-    _botClients[clientNum] = nil
+local function isBotSlot(clientNum)
+    local svFlags = tonumber(et.gentity_get(clientNum, "r.svFlags")) or 0
+    return math.floor(svFlags / SVF_BOT) % 2 == 1
 end
 
 local function botManager_runFrame(levelTime)
@@ -478,43 +472,40 @@ local function botManager_runFrame(levelTime)
     if levelTime - _botManager_lastCheck < BOT_MANAGER_INTERVAL then return end
     _botManager_lastCheck = levelTime
 
-    -- Count humans and collect bot clientNums per team
+    local maxClients   = tonumber(et.trap_Cvar_Get("sv_maxClients")) or 32
     local humansByTeam = { [TEAM_AXIS] = 0, [TEAM_ALLIES] = 0 }
     local botsByTeam   = { [TEAM_AXIS] = {}, [TEAM_ALLIES] = {} }
 
-    for clientNum, isBot in pairs(_botClients) do
-        local team = tonumber(et.gentity_get(clientNum, "sess.sessionTeam"))
-        if team == TEAM_AXIS or team == TEAM_ALLIES then
-            if isBot then
-                table.insert(botsByTeam[team], clientNum)
-            else
-                humansByTeam[team] = humansByTeam[team] + 1
+    -- Scan every slot directly — no reliance on connect/disconnect callbacks
+    for clientNum = 0, maxClients - 1 do
+        local cs = et.trap_GetConfigstring(et.CS_PLAYERS + clientNum)
+        if cs and cs ~= "" then
+            local team = tonumber(et.gentity_get(clientNum, "sess.sessionTeam"))
+            if team == TEAM_AXIS or team == TEAM_ALLIES then
+                if isBotSlot(clientNum) then
+                    table.insert(botsByTeam[team], clientNum)
+                else
+                    humansByTeam[team] = humansByTeam[team] + 1
+                end
             end
         end
     end
 
-    -- Desired bots per team: fill up to half the target, minus humans already on that team
     local halfTarget    = math.floor(BOT_MANAGER_TARGET / 2)
     local desiredAxis   = math.max(0, halfTarget - humansByTeam[TEAM_AXIS])
     local desiredAllies = math.max(0, halfTarget - humansByTeam[TEAM_ALLIES])
 
-    -- Drop excess bots from each team using "bot kick <name>" — the proper Omnibot API
+    -- Kick excess bots by client number — avoids name/color-code matching issues
     for _, team in ipairs({ TEAM_AXIS, TEAM_ALLIES }) do
         local desired = (team == TEAM_AXIS) and desiredAxis or desiredAllies
         local bots    = botsByTeam[team]
         while #bots > desired do
-            local botNum  = table.remove(bots)
-            local userinfo = et.trap_GetUserinfo(botNum)
-            local botName  = et.Info_ValueForKey(userinfo, "name")
-            _botClients[botNum] = nil
-            if botName and botName ~= "" then
-                et.trap_SendConsoleCommand(et.EXEC_APPEND, string.format("bot kick %s\n", botName))
-                log(string.format("BOT_MANAGER kicked bot '%s' (client %d, team %d) for balance", botName, botNum, team))
-            end
+            local botNum = table.remove(bots)
+            log(string.format("BOT_MANAGER kicking client %d (team %d) for balance", botNum, team))
+            et.trap_SendConsoleCommand(et.EXEC_APPEND, string.format("clientkick %d\n", botNum))
         end
     end
 
-    -- Tell Omnibot the new ceiling so it adds bots if slots are short
     local desiredTotal = desiredAxis + desiredAllies
     et.trap_SendConsoleCommand(et.EXEC_APPEND, string.format("bot maxbots %d\n", desiredTotal))
 end
@@ -565,7 +556,6 @@ local function commandLog_clientCommand(clientNum, cmd)
 end
 
 function et_ClientConnect(clientNum, firstTime, isBot)
-    botManager_clientConnect(clientNum, isBot)
     return connBan_clientConnect(clientNum, firstTime, isBot)
 end
 
@@ -575,7 +565,6 @@ function et_ClientBegin(clientNum)
 end
 
 function et_ClientDisconnect(clientNum)
-    botManager_clientDisconnect(clientNum)
 end
 
 function et_ClientUserinfoChanged(clientNum)

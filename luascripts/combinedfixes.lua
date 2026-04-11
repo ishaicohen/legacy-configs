@@ -526,8 +526,9 @@ local function botManager_runFrame(levelTime)
         humansByTeam[TEAM_AXIS],   #botsByTeam[TEAM_AXIS],
         desiredAllies, desiredAxis))
 
-    -- Lower the ceiling FIRST so Omnibot won't respawn a bot we're about to kick.
-    -- (clientkick alone does nothing: Omnibot immediately refills up to maxbots.)
+    -- Lower the floor BEFORE the ceiling, or the engine clamps maxbots back up.
+    -- Always send both so persisted minbots from a previous map can't block us.
+    et.trap_SendConsoleCommand(et.EXEC_APPEND, string.format("bot minbots %d\n", desiredTotal))
     et.trap_SendConsoleCommand(et.EXEC_APPEND, string.format("bot maxbots %d\n", desiredTotal))
 
     -- Kick excess bots from over-populated teams; skip any already pending removal
@@ -544,10 +545,7 @@ local function botManager_runFrame(levelTime)
         end
     end
 
-    -- If we need MORE bots, push a floor so Omnibot fills the gap.
-    if totalBots < desiredTotal then
-        et.trap_SendConsoleCommand(et.EXEC_APPEND, string.format("bot minbots %d\n", desiredTotal))
-    end
+    -- minbots/maxbots already sent above; kicks follow the lowered ceiling.
 end
 
 function et_InitGame(levelTime, randomSeed, restart)

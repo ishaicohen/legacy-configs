@@ -55,6 +55,12 @@ local SPAWN_INVUL_SECONDS = 1   -- shield duration in seconds
 -- hazz' /save and /load. Enabled when CS_CONFIGNAME contains any of these
 local SAVELOAD_KEYWORDS = { "practice", "test", "trickjump", "tj" }
 
+-- [BOT MANAGER]
+-- Dynamically fills empty slots with bots and removes them as real players join.
+-- Enable via CF_BOT_MANAGER=true; set target population with CF_BOT_MANAGER_TARGET.
+local ENABLE_BOT_MANAGER  = false
+local BOT_MANAGER_TARGET  = 10   -- total slots to keep populated (bots + humans)
+
 -- [VOTE BANS]
 -- GUIDs blocked from calling votes
 -- Certain players just can't behave themselves and will spam call vote for surrender.
@@ -101,6 +107,8 @@ COMMAND_LOG_REF         = env_bool("CF_COMMAND_LOG_REF",    COMMAND_LOG_REF)
 SPAWN_INVUL_SECONDS     = tonumber(os.getenv("CF_SPAWN_INVUL_SECONDS")) or SPAWN_INVUL_SECONDS
 BAN_REASON              = os.getenv("CF_BAN_REASON")                    or BAN_REASON
 LOG_FILEPATH            = os.getenv("CF_LOG_FILEPATH")                  or LOG_FILEPATH
+ENABLE_BOT_MANAGER      = env_bool("CF_BOT_MANAGER",        ENABLE_BOT_MANAGER)
+BOT_MANAGER_TARGET      = tonumber(os.getenv("CF_BOT_MANAGER_TARGET")) or BOT_MANAGER_TARGET
 
 local function _merge_csv_guids(env_name, target)
     local v = os.getenv(env_name)
@@ -442,6 +450,43 @@ local function saveLoad_clientCommand(clientNum, cmd)
     return 0
 end
 
+-- ============================================================
+-- MODULE: BOT MANAGER
+-- ============================================================
+
+local _botClients         = {}   -- [clientNum] = true(bot) / false(human)
+local _botManager_lastCheck = 0
+local BOT_MANAGER_INTERVAL  = 5000  -- ms between adjustments
+
+local function botManager_init()
+    _botClients           = {}
+    _botManager_lastCheck = 0
+end
+
+local function botManager_clientConnect(clientNum, isBot)
+    if not ENABLE_BOT_MANAGER then return end
+    _botClients[clientNum] = (isBot == 1)
+end
+
+local function botManager_clientDisconnect(clientNum)
+    if not ENABLE_BOT_MANAGER then return end
+    _botClients[clientNum] = nil
+end
+
+local function botManager_runFrame(levelTime)
+    if not ENABLE_BOT_MANAGER then return end
+    if levelTime - _botManager_lastCheck < BOT_MANAGER_INTERVAL then return end
+    _botManager_lastCheck = levelTime
+
+    local humans = 0
+    for _, isBot in pairs(_botClients) do
+        if not isBot then humans = humans + 1 end
+    end
+
+    local desired = math.max(0, BOT_MANAGER_TARGET - humans)
+    et.trap_SendConsoleCommand(et.EXEC_APPEND, string.format("bot maxbots %d\n", desired))
+end
+
 function et_InitGame(levelTime, randomSeed, restart)
     et.RegisterModname(modname .. " " .. version)
     if LOG_FILEPATH and LOG_FILEPATH ~= "" then
@@ -457,6 +502,7 @@ function et_InitGame(levelTime, randomSeed, restart)
     techPauseTeam = nil
     spawnInvul_init()
     saveLoad_init()
+    botManager_init()
     log("Initialized")
 end
 
@@ -487,12 +533,17 @@ local function commandLog_clientCommand(clientNum, cmd)
 end
 
 function et_ClientConnect(clientNum, firstTime, isBot)
+    botManager_clientConnect(clientNum, isBot)
     return connBan_clientConnect(clientNum, firstTime, isBot)
 end
 
 function et_ClientBegin(clientNum)
     guidBlocker_check(clientNum)
     connBan_clientBegin(clientNum)
+end
+
+function et_ClientDisconnect(clientNum)
+    botManager_clientDisconnect(clientNum)
 end
 
 function et_ClientUserinfoChanged(clientNum)
@@ -519,4 +570,5 @@ end
 
 function et_RunFrame(levelTime)
     pause_runFrame(levelTime)
+    botManager_runFrame(levelTime)
 end

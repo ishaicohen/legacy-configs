@@ -458,6 +458,7 @@ local _botClients           = {}     -- [clientNum] = true(bot) / false(human)
 local _pendingKicks         = {}     -- [clientNum] = true when kick queued but not yet gone
 local _botManager_lastCheck = 0
 local _botManager_mapStart  = 0
+local _botManager_reset     = false  -- true once we've sent the post-grace reset
 local BOT_MANAGER_INTERVAL  = 30000  -- ms between adjustments
 local BOT_MANAGER_GRACE     = 15000  -- ms to wait after map start before first check
 
@@ -466,6 +467,7 @@ local function botManager_init(levelTime)
     _pendingKicks         = {}
     _botManager_lastCheck = 0
     _botManager_mapStart  = levelTime or 0
+    _botManager_reset     = false
 end
 
 local function botManager_clientConnect(clientNum, isBot)
@@ -493,7 +495,19 @@ end
 
 local function botManager_runFrame(levelTime)
     if not ENABLE_BOT_MANAGER then return end
-    if levelTime - _botManager_mapStart  < BOT_MANAGER_GRACE    then return end
+    if levelTime - _botManager_mapStart < BOT_MANAGER_GRACE then return end
+
+    -- First tick after grace period: reset min/max to full target.
+    -- Omnibot is fully initialised by now and will accept these commands.
+    if not _botManager_reset then
+        _botManager_reset = true
+        et.trap_SendConsoleCommand(et.EXEC_APPEND, string.format("bot minbots %d\n", BOT_MANAGER_TARGET))
+        et.trap_SendConsoleCommand(et.EXEC_APPEND, string.format("bot maxbots %d\n", BOT_MANAGER_TARGET))
+        log(string.format("BOT_MANAGER post-grace reset: minbots/maxbots=%d", BOT_MANAGER_TARGET))
+        _botManager_lastCheck = levelTime
+        return  -- let Omnibot spawn/adjust for one interval before we interfere
+    end
+
     if levelTime - _botManager_lastCheck < BOT_MANAGER_INTERVAL then return end
     _botManager_lastCheck = levelTime
 

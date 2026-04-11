@@ -456,7 +456,7 @@ end
 
 local _botClients         = {}   -- [clientNum] = true(bot) / false(human)
 local _botManager_lastCheck = 0
-local BOT_MANAGER_INTERVAL  = 5000  -- ms between adjustments
+local BOT_MANAGER_INTERVAL  = 30000  -- ms between adjustments
 
 local function botManager_init()
     _botClients           = {}
@@ -576,6 +576,8 @@ end
 function et_ClientUserinfoChanged(clientNum)
     defaultClass_clientUserinfoChanged(clientNum)
     guidBlocker_check(clientNum)
+    -- Force immediate bot balance check when a player changes team
+    _botManager_lastCheck = 0
 end
 
 function et_ClientCommand(clientNum, command)

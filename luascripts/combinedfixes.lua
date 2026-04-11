@@ -455,6 +455,7 @@ end
 -- ============================================================
 
 local _botClients           = {}     -- [clientNum] = true(bot) / false(human)
+local _pendingKicks         = {}     -- [clientNum] = true when kick queued but not yet gone
 local _botManager_lastCheck = 0
 local _botManager_mapStart  = 0
 local BOT_MANAGER_INTERVAL  = 30000  -- ms between adjustments
@@ -462,6 +463,7 @@ local BOT_MANAGER_GRACE     = 15000  -- ms to wait after map start before first 
 
 local function botManager_init(levelTime)
     _botClients           = {}
+    _pendingKicks         = {}
     _botManager_lastCheck = 0
     _botManager_mapStart  = levelTime or 0
 end
@@ -482,6 +484,7 @@ end
 
 local function botManager_clientDisconnect(clientNum)
     _botClients[clientNum] = nil
+    _pendingKicks[clientNum] = nil
 end
 
 local function isBotSlot(clientNum)
@@ -523,14 +526,17 @@ local function botManager_runFrame(levelTime)
         humansByTeam[TEAM_AXIS],   #botsByTeam[TEAM_AXIS],
         desiredAllies, desiredAxis))
 
-    -- Kick excess bots from over-populated teams
+    -- Kick excess bots from over-populated teams; skip any already pending removal
     for _, team in ipairs({ TEAM_AXIS, TEAM_ALLIES }) do
         local desired = (team == TEAM_AXIS) and desiredAxis or desiredAllies
         local bots    = botsByTeam[team]
         while #bots > desired do
             local botNum = table.remove(bots)
-            log(string.format("BOT_MANAGER kicking client %d (team %d)", botNum, team))
-            et.trap_SendConsoleCommand(et.EXEC_APPEND, string.format("clientkick %d\n", botNum))
+            if not _pendingKicks[botNum] then
+                _pendingKicks[botNum] = true
+                log(string.format("BOT_MANAGER kicking client %d (team %d)", botNum, team))
+                et.trap_SendConsoleCommand(et.EXEC_APPEND, string.format("clientkick %d\n", botNum))
+            end
         end
     end
 
@@ -605,8 +611,10 @@ end
 function et_ClientUserinfoChanged(clientNum)
     defaultClass_clientUserinfoChanged(clientNum)
     guidBlocker_check(clientNum)
-    -- Force immediate bot balance check when a player changes team
-    _botManager_lastCheck = 0
+    -- Force immediate bot balance check when a human changes team (not bots)
+    if not isBotSlot(clientNum) then
+        _botManager_lastCheck = 0
+    end
 end
 
 function et_ClientCommand(clientNum, command)

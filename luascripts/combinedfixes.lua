@@ -456,15 +456,16 @@ end
 
 local _botManager_lastCheck = 0
 local BOT_MANAGER_INTERVAL  = 30000  -- ms between adjustments
-local SVF_BOT               = 8      -- engine flag for bot entities
 
 local function botManager_init()
     _botManager_lastCheck = 0
 end
 
 local function isBotSlot(clientNum)
-    local svFlags = tonumber(et.gentity_get(clientNum, "r.svFlags")) or 0
-    return math.floor(svFlags / SVF_BOT) % 2 == 1
+    -- Bots have no real GUID; humans always have one
+    local userinfo = et.trap_GetUserinfo(clientNum)
+    local guid = et.Info_ValueForKey(userinfo, "cl_guid")
+    return not guid or guid == "" or guid == "0"
 end
 
 local function botManager_runFrame(levelTime)
@@ -476,7 +477,6 @@ local function botManager_runFrame(levelTime)
     local humansByTeam = { [TEAM_AXIS] = 0, [TEAM_ALLIES] = 0 }
     local botsByTeam   = { [TEAM_AXIS] = {}, [TEAM_ALLIES] = {} }
 
-    -- Scan every slot directly — no reliance on connect/disconnect callbacks
     for clientNum = 0, maxClients - 1 do
         local cs = et.trap_GetConfigstring(et.CS_PLAYERS + clientNum)
         if cs and cs ~= "" then
@@ -495,17 +495,23 @@ local function botManager_runFrame(levelTime)
     local desiredAxis   = math.max(0, halfTarget - humansByTeam[TEAM_AXIS])
     local desiredAllies = math.max(0, halfTarget - humansByTeam[TEAM_ALLIES])
 
-    -- Kick excess bots by client number — avoids name/color-code matching issues
+    log(string.format("BOT_MANAGER humans=%d+%d bots=%d+%d desired=%d+%d",
+        humansByTeam[TEAM_ALLIES], humansByTeam[TEAM_AXIS],
+        #botsByTeam[TEAM_ALLIES], #botsByTeam[TEAM_AXIS],
+        desiredAllies, desiredAxis))
+
+    -- Kick excess bots from the over-populated team
     for _, team in ipairs({ TEAM_AXIS, TEAM_ALLIES }) do
         local desired = (team == TEAM_AXIS) and desiredAxis or desiredAllies
         local bots    = botsByTeam[team]
         while #bots > desired do
             local botNum = table.remove(bots)
-            log(string.format("BOT_MANAGER kicking client %d (team %d) for balance", botNum, team))
+            log(string.format("BOT_MANAGER kicking client %d (team %d)", botNum, team))
             et.trap_SendConsoleCommand(et.EXEC_APPEND, string.format("clientkick %d\n", botNum))
         end
     end
 
+    -- Raise the ceiling so Omnibot fills the gap
     local desiredTotal = desiredAxis + desiredAllies
     et.trap_SendConsoleCommand(et.EXEC_APPEND, string.format("bot maxbots %d\n", desiredTotal))
 end

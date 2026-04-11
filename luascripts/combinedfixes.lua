@@ -454,18 +454,35 @@ end
 -- MODULE: BOT MANAGER
 -- ============================================================
 
+local _botClients           = {}     -- [clientNum] = true(bot) / false(human)
 local _botManager_lastCheck = 0
 local BOT_MANAGER_INTERVAL  = 30000  -- ms between adjustments
 
 local function botManager_init()
+    _botClients           = {}
     _botManager_lastCheck = 0
 end
 
+local function botManager_clientConnect(clientNum, isBot)
+    local flag = (isBot == 1)
+    if not flag then
+        -- Fallback: Omnibot GUIDs always start with "OMNIBOT"
+        local userinfo = et.trap_GetUserinfo(clientNum)
+        local guid = et.Info_ValueForKey(userinfo, "cl_guid") or ""
+        flag = string.sub(guid, 1, 7) == "OMNIBOT"
+    end
+    _botClients[clientNum] = flag
+    local guid = et.Info_ValueForKey(et.trap_GetUserinfo(clientNum), "cl_guid") or ""
+    log(string.format("BOT_MANAGER connect client=%d isBot_param=%s guid=%s detected_bot=%s",
+        clientNum, tostring(isBot == 1), guid, tostring(flag)))
+end
+
+local function botManager_clientDisconnect(clientNum)
+    _botClients[clientNum] = nil
+end
+
 local function isBotSlot(clientNum)
-    -- Bots have no real GUID; humans always have one
-    local userinfo = et.trap_GetUserinfo(clientNum)
-    local guid = et.Info_ValueForKey(userinfo, "cl_guid")
-    return not guid or guid == "" or guid == "0"
+    return _botClients[clientNum] == true
 end
 
 local function botManager_runFrame(levelTime)
@@ -562,6 +579,7 @@ local function commandLog_clientCommand(clientNum, cmd)
 end
 
 function et_ClientConnect(clientNum, firstTime, isBot)
+    botManager_clientConnect(clientNum, isBot)
     return connBan_clientConnect(clientNum, firstTime, isBot)
 end
 
@@ -571,6 +589,7 @@ function et_ClientBegin(clientNum)
 end
 
 function et_ClientDisconnect(clientNum)
+    botManager_clientDisconnect(clientNum)
 end
 
 function et_ClientUserinfoChanged(clientNum)

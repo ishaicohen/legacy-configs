@@ -615,7 +615,11 @@ function et_InitGame(levelTime, randomSeed, restart)
     spawnInvul_init()
     saveLoad_init()
     botManager_init(levelTime)
-    log("Initialized")
+    -- Force teams unlocked at every map start so warmup is always joinable.
+    -- Also logs ENABLE_TEAM_LOCK to verify the env var was read correctly.
+    et.trap_SendConsoleCommand(et.EXEC_APPEND, "ref unlock r\n")
+    et.trap_SendConsoleCommand(et.EXEC_APPEND, "ref unlock b\n")
+    log(string.format("Initialized ENABLE_TEAM_LOCK=%s", tostring(ENABLE_TEAM_LOCK)))
 end
 
 -- ============================================================

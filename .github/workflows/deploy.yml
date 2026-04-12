@@ -9,6 +9,7 @@ on:
       - etl_server.cfg
       - luascripts/**
       - mapscripts/**
+      - omnibot/nav/**
   schedule:
     - cron: '0 5 * * *'
   workflow_dispatch:
@@ -30,6 +31,26 @@ jobs:
           source: docker-compose.yml
           target: /opt/etlegacy/
           overwrite: true
+
+      - name: Copy nav files to VM
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.VM_HOST }}
+          username: ${{ secrets.VM_USER }}
+          key: ${{ secrets.VM_SSH_KEY }}
+          source: omnibot/nav/*
+          target: /opt/etlegacy/nav-staging/
+          strip_components: 2
+          overwrite: true
+
+      - name: Inject nav files into container
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VM_HOST }}
+          username: ${{ secrets.VM_USER }}
+          key: ${{ secrets.VM_SSH_KEY }}
+          script: |
+            docker cp /opt/etlegacy/nav-staging/. enemyterritory-public:/legacy/server/legacy/omni-bot/et/nav/
 
       - name: Restart containers (schedule or manual update — pull new image, both servers)
         if: github.event_name != 'push'

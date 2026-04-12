@@ -39,7 +39,7 @@ jobs:
           username: ${{ secrets.VM_USER }}
           key: ${{ secrets.VM_SSH_KEY }}
           source: omnibot/nav
-          target: /opt/etlegacy/
+          target: ~/
           overwrite: true
 
       - name: Inject nav files into container
@@ -49,7 +49,7 @@ jobs:
           username: ${{ secrets.VM_USER }}
           key: ${{ secrets.VM_SSH_KEY }}
           script: |
-            docker cp /opt/etlegacy/omnibot/nav/. enemyterritory-public:/legacy/server/legacy/omni-bot/et/nav/
+            docker cp ~/omnibot/nav/. enemyterritory-public:/legacy/server/legacy/omni-bot/et/nav/
 
       - name: Restart containers (schedule or manual update — pull new image, both servers)
         if: github.event_name != 'push'

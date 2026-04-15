@@ -3,7 +3,7 @@ services:
     container_name: enemyterritory
     image: oksii/etlegacy:stable
     environment:
-      - 'HOSTNAME=RTCW ET Israel'
+      - 'HOSTNAME=^7RTCW ^1ET ^4Israel'
       - 'PASSWORD=${ETL_PASSWORD}'
       - 'RCONPASSWORD=${ETL_RCONPASSWORD}'
       - 'REFPASSWORD=${ETL_REFPASSWORD}'

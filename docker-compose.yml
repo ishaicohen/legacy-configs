@@ -57,3 +57,28 @@ services:
     stdin_open: true
     tty: true
     restart: unless-stopped
+
+  etl-server-trickjump:
+    container_name: enemyterritory-trickjump
+    image: oksii/etlegacy:stable
+    environment:
+      - 'HOSTNAME=^4Israeli ^7Trickjump'
+      - 'RCONPASSWORD=${RCONPASSWORD}'
+      - 'REFPASSWORD=${REFPASSWORD}'
+      - 'SCPASSWORD=${SCPASSWORD}'
+      - 'PASSWORD=${PASSWORD}'
+      - 'MAXCLIENTS=64'
+      - 'STARTMAP=chocojump'
+      - 'SERVERCONF=tj'
+      - 'MAPS=chocojump'
+      - 'SETTINGSURL=https://github.com/ishaicohen/legacy-configs.git'
+      - 'SETTINGSBRANCH=main'
+      - 'MAP_PORT=27962'
+      - 'ADVERT=1'
+    volumes:
+      - ./maps:/maps
+    ports:
+      - '27962:27962/udp'
+    stdin_open: true
+    tty: true
+    restart: unless-stopped

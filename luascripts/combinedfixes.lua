@@ -55,11 +55,6 @@ local SPAWN_INVUL_SECONDS = 1   -- shield duration in seconds
 -- hazz' /save and /load. Enabled when CS_CONFIGNAME contains any of these
 local SAVELOAD_KEYWORDS = { "practice", "test", "trickjump", "tj" }
 
--- [NOSTAMINA]
--- Automatically applies infinite stamina to all players on spawn.
--- Enabled when CS_CONFIGNAME contains any of these keywords.
-local NOSTAMINA_KEYWORDS = { "trickjump", "tj" }
-
 -- [BOT MANAGER]
 -- Dynamically fills empty slots with bots and removes them as real players join.
 -- Enable via CF_BOT_MANAGER=true; set target population with CF_BOT_MANAGER_TARGET.
@@ -257,7 +252,6 @@ local techPauseUsed      = { [TEAM_AXIS] = 0, [TEAM_ALLIES] = 0 }
 local techPauseTeam      = nil
 local _spawnInvulActive  = false
 local _saveLoadActive    = false
-local _nostaminaActive   = false
 local _saveLoadPositions = {}
 local _saveLoadSprints   = {}
 
@@ -457,33 +451,6 @@ local function saveLoad_clientCommand(clientNum, cmd)
 end
 
 -- ============================================================
--- MODULE: NOSTAMINA
--- ============================================================
-
-local FL_NOSTAMINA = 0x8000  -- cheat flag: no stamina drain (g_local.h)
-
-local function nostamina_init()
-    local raw     = et.trap_GetConfigstring(et.CS_CONFIGNAME) or ""
-    local cfgname = string.lower(string.gsub(raw, "%^%d", ""))
-    _nostaminaActive = false
-    for _, kw in ipairs(NOSTAMINA_KEYWORDS) do
-        if cfgHasWord(cfgname, kw) then
-            _nostaminaActive = true
-            break
-        end
-    end
-    if _nostaminaActive then
-        log("Nostamina enabled [config: " .. cfgname .. "]")
-    end
-end
-
-local function nostamina_clientSpawn(clientNum)
-    if not _nostaminaActive then return end
-    local flags = et.gentity_get(clientNum, "flags")
-    et.gentity_set(clientNum, "flags", flags | FL_NOSTAMINA)
-end
-
--- ============================================================
 -- MODULE: BOT MANAGER
 -- ============================================================
 
@@ -647,7 +614,6 @@ function et_InitGame(levelTime, randomSeed, restart)
     techPauseTeam = nil
     spawnInvul_init()
     saveLoad_init()
-    nostamina_init()
     botManager_init(levelTime)
     log("Initialized")
 end
@@ -715,7 +681,6 @@ end
 
 function et_ClientSpawn(clientNum, revived)
     spawnInvul_clientSpawn(clientNum)
-    nostamina_clientSpawn(clientNum)
 end
 
 

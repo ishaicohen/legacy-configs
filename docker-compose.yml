@@ -26,7 +26,7 @@ services:
     restart: unless-stopped
   
   etl-server-2:
-    container_name: enemyterritory
+    container_name: enemyterritory2
     image: oksii/etlegacy:stable
     environment:
       - 'HOSTNAME=^7RTCW ^1ET ^4Israel 2'

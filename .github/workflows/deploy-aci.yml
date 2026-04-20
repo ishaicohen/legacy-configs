@@ -42,6 +42,7 @@ jobs:
             --cpu 1 \
             --memory 1.5 \
             --restart-policy Always \
+            --os-type Linux \
             --environment-variables \
               HOSTNAME='^4Israeli ^7Team' \
               STARTMAP=radar \

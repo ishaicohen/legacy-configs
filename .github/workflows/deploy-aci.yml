@@ -42,7 +42,7 @@ jobs:
           cpu: 1
           memory: 1.5
           restart-policy: Always
-          environment-variables: >
+          environment-variables: |
             HOSTNAME=^4Israeli ^7Team
             STARTMAP=radar
             SERVERCONF=legacy6_svfps50

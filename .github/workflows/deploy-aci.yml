@@ -1,0 +1,55 @@
+name: Deploy etl-server to ACI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - aci.yml
+      - configs/legacy6_svfps50.config
+      - configs/legacy6.config
+      - etl_server.cfg
+      - luascripts/**
+      - mapscripts/**
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy to ACI
+        uses: azure/aci-deploy@v1
+        with:
+          resource-group: personal_registry
+          name: enemyterritory
+          image: oksii/etlegacy:stable
+          location: germanywestcentral
+          ports: 27960
+          protocol: UDP
+          dns-name-label: etl-israel
+          cpu: 1
+          memory: 1.5
+          restart-policy: Always
+          environment-variables: >
+            HOSTNAME=^4Israeli ^7Team
+            STARTMAP=radar
+            SERVERCONF=legacy6_svfps50
+            MAPS=braundorf_b4:bremen_b3:decay_sw:erdenberg_t2:et_brewdog_b7:et_operation_b8:etl_adlernest_v4:etl_frostbite:etl_ice:etl_sp_delivery_v5:karsiah_te2:missile_b3:supply_sp:sw_goldrush_te:te_escape2_fixed3:mp_sillyctf:te_valhalla_eswc:tc_base:sw_oasis_b3:etl_supply
+            SETTINGSURL=https://github.com/plissje/legacy-configs.git
+            SETTINGSBRANCH=main
+          secure-environment-variables: >
+            PASSWORD=rtcw
+            RCONPASSWORD=rtcw
+            REFPASSWORD=rtcw

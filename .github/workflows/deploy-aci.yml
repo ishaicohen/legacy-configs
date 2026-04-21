@@ -1,15 +1,6 @@
 name: Deploy etl-server to ACI
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - aci.yml
-      - configs/legacy6_svfps50.config
-      - configs/legacy6.config
-      - etl_server.cfg
-      - luascripts/**
-      - mapscripts/**
   workflow_dispatch:
 
 permissions:
@@ -40,7 +31,7 @@ jobs:
             --protocol UDP \
             --dns-name-label etl-israel \
             --cpu 1 \
-            --memory 1.5 \
+            --memory 1 \
             --restart-policy Always \
             --os-type Linux \
             --environment-variables \

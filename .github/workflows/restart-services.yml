@@ -1,0 +1,71 @@
+# ============================================================
+# Restart Docker Services — Manual Workflow
+# ============================================================
+# HOW TO USE:
+#   1. Go to the "Actions" tab in GitHub.
+#   2. Select "Restart Docker Services" from the left sidebar.
+#   3. Click "Run workflow" (top-right of the workflow runs list).
+#   4. Fill in the "services" input (optional):
+#        - Leave BLANK to restart ALL services.
+#        - Enter one or more service names (space-separated) to
+#          restart only those. Example:
+#            etl-server etl-server-public
+#   5. Click the green "Run workflow" button to confirm.
+#
+# Available services:
+#   etl-server, etl-server-2, etl-server-public, etl-server-trickjump
+# ============================================================
+
+name: Restart Docker Services
+
+on:
+  workflow_dispatch:
+    inputs:
+      services:
+        description: |
+          Space-separated list of services to restart.
+          Available: etl-server, etl-server-2, etl-server-public, etl-server-trickjump
+          Leave empty to restart ALL services.
+        required: false
+        default: ''
+        type: string
+
+jobs:
+  restart:
+    name: Restart Services
+    runs-on: ubuntu-latest
+    steps:
+      - name: Determine target services
+        id: target
+        run: |
+          SERVICES="${{ inputs.services }}"
+          if [ -z "$SERVICES" ]; then
+            echo "scope=ALL services" >> $GITHUB_OUTPUT
+          else
+            echo "scope=$SERVICES" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Restart Docker services via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VM_HOST }}
+          username: ${{ secrets.VM_USER }}
+          key: ${{ secrets.VM_SSH_KEY }}
+          script: |
+            set -e
+            cd /opt/etlegacy
+
+            SERVICES="${{ inputs.services }}"
+
+            if [ -z "$SERVICES" ]; then
+              echo ">>> Restarting ALL services"
+              docker compose down
+              docker compose up -d
+            else
+              echo ">>> Restarting: $SERVICES"
+              docker compose down $SERVICES
+              docker compose up -d $SERVICES
+            fi
+
+            echo ">>> Done. Running containers:"
+            docker compose ps

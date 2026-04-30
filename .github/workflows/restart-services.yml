@@ -19,6 +19,8 @@
 name: Restart Docker Services
 
 on:
+  schedule:
+    - cron: '0 5 * * *'
   workflow_dispatch:
     inputs:
       services:

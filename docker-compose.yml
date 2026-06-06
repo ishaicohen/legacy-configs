@@ -115,6 +115,7 @@ services:
     image: oksii/etlegacy:stable
     environment:
       - 'HOSTNAME=test1'
+      - 'MAPS=braundorf_b4:bremen_b3:decay_sw:erdenberg_t2:et_brewdog_b7:et_operation_b8:etl_adlernest_v4:etl_frostbite_v17:etl_ice_v12:etl_sp_delivery_v5:karsiah_te2:missile_b3:supply_sp:sw_goldrush_te:te_escape2_fixed3'
       - 'STATS_GATHER_FEATURES=true'
       - 'STATS_AUTO_CONFIG_12=legacy6'
       - 'PASSWORD=${GOYPASSWORD}'
@@ -134,6 +135,7 @@ services:
     image: oksii/etlegacy:stable
     environment:
       - 'HOSTNAME=test2'
+      - 'MAPS=braundorf_b4:bremen_b3:decay_sw:erdenberg_t2:et_brewdog_b7:et_operation_b8:etl_adlernest_v4:etl_frostbite_v17:etl_ice_v12:etl_sp_delivery_v5:karsiah_te2:missile_b3:supply_sp:sw_goldrush_te:te_escape2_fixed3'
       - 'STATS_GATHER_FEATURES=true'
       - 'STATS_AUTO_CONFIG_6=legacy3'
       - 'PASSWORD=${GOYPASSWORD}'

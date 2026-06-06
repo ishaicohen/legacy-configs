@@ -71,3 +71,12 @@ jobs:
 
             echo ">>> Done. Running containers:"
             docker compose ps
+
+      - name: Prune unused Docker resources
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VM_HOST }}
+          username: ${{ secrets.VM_USER }}
+          key: ${{ secrets.VM_SSH_KEY }}
+          script: |
+            echo "y" | docker system prune -a --volumes

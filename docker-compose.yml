@@ -109,3 +109,39 @@ services:
     stdin_open: true
     tty: true
     restart: unless-stopped
+
+  etl-server-goy-6:
+    container_name: enemyterritory-goy-6
+    image: oksii/etlegacy:stable
+    environment:
+      - 'HOSTNAME=test1'
+      - 'STATS_GATHER_FEATURES=true'
+      - 'PASSWORD=${GOYPASSWORD}'
+      - 'RCONPASSWORD=${GOYRCONPASSWORD}'
+      - 'REFPASSWORD=${GOYREFPASSWORD}'
+      - 'MAP_PORT=27970'
+    volumes:
+      - ./maps:/maps
+    ports:
+      - '27970:27970/udp'
+    stdin_open: true
+    tty: true
+    restart: unless-stopped
+  
+  etl-server-goy-3:
+    container_name: enemyterritory-goy-3
+    image: oksii/etlegacy:stable
+    environment:
+      - 'HOSTNAME=test1'
+      - 'STATS_GATHER_FEATURES=true'
+      - 'PASSWORD=${GOYPASSWORD}'
+      - 'RCONPASSWORD=${GOYRCONPASSWORD}'
+      - 'REFPASSWORD=${GOYREFPASSWORD}'
+      - 'MAP_PORT=27971'
+    volumes:
+      - ./maps:/maps
+    ports:
+      - '27971:27971/udp'
+    stdin_open: true
+    tty: true
+    restart: unless-stopped

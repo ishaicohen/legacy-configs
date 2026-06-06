@@ -116,6 +116,7 @@ services:
     environment:
       - 'HOSTNAME=test1'
       - 'STATS_GATHER_FEATURES=true'
+      - 'STATS_AUTO_CONFIG_12=legacy6'
       - 'PASSWORD=${GOYPASSWORD}'
       - 'RCONPASSWORD=${GOYRCONPASSWORD}'
       - 'REFPASSWORD=${GOYREFPASSWORD}'
@@ -132,8 +133,9 @@ services:
     container_name: enemyterritory-goy-3
     image: oksii/etlegacy:stable
     environment:
-      - 'HOSTNAME=test1'
+      - 'HOSTNAME=test2'
       - 'STATS_GATHER_FEATURES=true'
+      - 'STATS_AUTO_CONFIG_6=legacy3'
       - 'PASSWORD=${GOYPASSWORD}'
       - 'RCONPASSWORD=${GOYRCONPASSWORD}'
       - 'REFPASSWORD=${GOYREFPASSWORD}'

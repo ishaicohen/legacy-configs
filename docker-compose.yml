@@ -44,7 +44,6 @@ services:
     stdin_open: true
     tty: true
     restart: unless-stopped
-  
   etl-server-goy-3:
     container_name: enemyterritory-goy-3
     image: oksii/etlegacy:stable

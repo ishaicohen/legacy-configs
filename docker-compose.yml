@@ -24,97 +24,11 @@ services:
     stdin_open: true
     tty: true
     restart: unless-stopped
-  
-  etl-server-2:
-    container_name: enemyterritory2
-    image: oksii/etlegacy:stable
-    environment:
-      - 'HOSTNAME=^7RTCW ^1ET ^4Israel 2'
-      - 'PASSWORD=${ETL_PASSWORD}'
-      - 'RCONPASSWORD=${ETL_RCONPASSWORD}'
-      - 'REFPASSWORD=${ETL_REFPASSWORD}'
-      - 'STARTMAP=supply'
-      - 'SERVERCONF=legacy6_svfps50'
-      - 'MAPS=braundorf_b4:bremen_b3:decay_sw:erdenberg_t2:et_brewdog_b7:et_operation_b8:etl_adlernest_v4:etl_frostbite_v17:etl_ice_v12:etl_sp_delivery:karsiah_te2:missile_b3:supply_sp:sw_goldrush_te:te_escape2_fixed3:reactor_final'
-      - 'SETTINGSURL=https://github.com/plissje/legacy-configs.git'
-      - 'SETTINGSBRANCH=main'
-      - 'STATS_SUBMIT=true'
-      - 'STATS_API_URL_SUBMIT=https://etl-stats.maryan.io/api/submit-stats'
-      - 'STATS_API_URL_MATCHID=https://etl-stats.maryan.io/api/match-manager'
-      - 'STATS_API_TOKEN=${STATS_API_TOKEN}'
-      - 'STATS_API_VERSION_CHECK=false'
-      - 'MAP_PORT=27963'
-    volumes:
-      - ./maps:/maps
-    ports:
-      - '27963:27963/udp'
-    stdin_open: true
-    tty: true
-    restart: unless-stopped
-
-  etl-server-public:
-    container_name: enemyterritory-public
-    image: oksii/etlegacy:stable
-    environment:
-      - 'HOSTNAME=^4Falafel ^1& ^7Firefights'
-      - 'RCONPASSWORD=${RCONPASSWORD}'
-      - 'REFPASSWORD=${REFPASSWORD}'
-      - 'SCPASSWORD=${SCPASSWORD}'
-      - 'PASSWORD=${PASSWORD}'
-      - 'MAXCLIENTS=64'
-      - 'STARTMAP=supply'
-      - 'OMNIBOT=1'
-      - 'SERVERCONF=public'
-      - 'CF_DEFAULT_CLASS=false'
-      - 'CF_TEAM_LOCK=false'
-      - 'CF_TECH_PAUSE=false'
-      - 'CF_GUID_BLOCKER=false'
-      - 'CF_BOT_MANAGER=true'
-      - 'CF_BOT_MANAGER_TARGET=10'
-      - 'MAPS=radar:fueldump:sw_goldrush_te:sw_oasis_b3:et_beach:supply:etl_frostbite:etl_adlernest:etl_braundorf:etl_ice:et_brewdog:bremen_b3:railgun:missile_b4'
-      - 'SETTINGSURL=https://github.com/ishaicohen/legacy-configs.git'
-      - 'SETTINGSBRANCH=main'
-      - 'STATS_SUBMIT=false'
-      - 'MAP_PORT=27961'
-      - 'ADVERT=1'
-    volumes:
-      - ./maps:/maps
-    ports:
-      - '27961:27961/udp'
-    stdin_open: true
-    tty: true
-    restart: unless-stopped
-
-  etl-server-trickjump:
-    container_name: enemyterritory-trickjump
-    image: oksii/etlegacy:stable
-    environment:
-      - 'HOSTNAME=^4Israeli ^7Trickjump'
-      - 'RCONPASSWORD=${RCONPASSWORD}'
-      - 'REFPASSWORD=${REFPASSWORD}'
-      - 'SCPASSWORD=${SCPASSWORD}'
-      - 'PASSWORD=${PASSWORD}'
-      - 'MAXCLIENTS=64'
-      - 'STARTMAP=chocojump'
-      - 'SERVERCONF=tj'
-      - 'MAPS=chocojump'
-      - 'SETTINGSURL=https://github.com/ishaicohen/legacy-configs.git'
-      - 'SETTINGSBRANCH=main'
-      - 'MAP_PORT=27962'
-      - 'ADVERT=1'
-    volumes:
-      - ./maps:/maps
-    ports:
-      - '27962:27962/udp'
-    stdin_open: true
-    tty: true
-    restart: unless-stopped
-
   etl-server-goy-6:
     container_name: enemyterritory-goy-6
     image: oksii/etlegacy:stable
     environment:
-      - 'HOSTNAME=test1'
+      - 'HOSTNAME=^7Only^1Frags ^7| ^36v6 ^7& ^33v3 ^7Match Server [^5ETL^7]'
       - 'MAPS=braundorf_b4:bremen_b3:decay_sw:erdenberg_t2:et_brewdog_b7:et_operation_b8:etl_adlernest_v4:etl_frostbite_v17:etl_ice_v12:etl_sp_delivery:karsiah_te2:missile_b3:supply_sp:sw_goldrush_te:te_escape2_fixed3:reactor_final'
       - 'STATS_GATHER_FEATURES=true'
       - 'STATS_SUBMIT=true'
@@ -135,7 +49,7 @@ services:
     container_name: enemyterritory-goy-3
     image: oksii/etlegacy:stable
     environment:
-      - 'HOSTNAME=test2'
+      - 'HOSTNAME=^7Only^1Frags ^7| ^36v6 ^7& ^33v3 ^7Match Server [^5ETL^7]'
       - 'MAPS=braundorf_b4:bremen_b3:decay_sw:erdenberg_t2:et_brewdog_b7:et_operation_b8:etl_adlernest_v4:etl_frostbite_v17:etl_ice_v12:etl_sp_delivery:karsiah_te2:missile_b3:supply_sp:sw_goldrush_te:te_escape2_fixed3:reactor_final'
       - 'STATS_GATHER_FEATURES=true'
       - 'STATS_SUBMIT=true'

@@ -1,6 +1,6 @@
 --[[
     stats.lua  — root module for ETLegacy game stats collection
-    Version: 2.6.0
+    Version: 2.7.2
 
     All user-facing settings live in the CONFIGURATION block below.
     config.toml is kept only for map-specific patterns and common buildables.
@@ -28,6 +28,9 @@ local COLLECT_SHOVE_STATS       = true
 local COLLECT_MOVEMENT_STATS    = true
 local COLLECT_STANCE_STATS      = true   -- prone / crouch / sprint time, etc.
 local COLLECT_GAMELOG           = true   -- in-round event timeline (kills, damage, chat, objectives, etc.)
+local COLLECT_VEHICLE_STATS     = true   -- escort vehicle tracking: per-player escort credit + timeline events
+local COLLECT_VEHICLE_TELEMETRY = true   -- path-vertex position samples for vehicle + objective carriers (~200 events/round)
+local COLLECT_VEHICLE_DAMAGE    = true   -- per-player vehicle/objective damage + repair tally events
 local COLLECT_WEAPON_FIRE       = false  -- log every weapon shot (et_WeaponFire + et_FixedMGFire)
                                          -- WARNING: very high volume -- not recommended for normal use.
 
@@ -54,8 +57,8 @@ local AUTO_CONFIG_MAP = {
 }
 
 -- [AUTO-START TIMING]
-local AUTO_START_WAIT_INITIAL   = 420    -- seconds  (First Round, 7min)
-local AUTO_START_WAIT           = 180    -- seconds  (Consecutive Rounds, 3 min)
+local AUTO_START_WAIT_INITIAL   = 300    -- seconds  (First Round, 7min)
+local AUTO_START_WAIT           = 120    -- seconds  (Consecutive Rounds, 3 min)
 
 -- [AUTO-START PHASED MODE]
 -- "simple"  → single window using AUTO_START_WAIT_INITIAL / AUTO_START_WAIT (default).
@@ -73,7 +76,7 @@ local SAVE_STATS_DELAY          = 3000   -- ms after intermission before SaveSta
 
 -- [MODULE]
 local MODNAME                   = "stats"
-local VERSION                   = "2.6.0"
+local VERSION                   = "2.7.2"
 
 -- [ENV OVERRIDES]
 -- Any setting above can be overridden by an environment variable of the same
@@ -98,6 +101,9 @@ COLLECT_OBJ_STATS               = env_bool("STATS_API_OBJSTATS",        COLLECT_
 COLLECT_SHOVE_STATS             = env_bool("STATS_API_SHOVESTATS",      COLLECT_SHOVE_STATS)
 COLLECT_MOVEMENT_STATS          = env_bool("STATS_API_MOVEMENTSTATS",   COLLECT_MOVEMENT_STATS)
 COLLECT_STANCE_STATS            = env_bool("STATS_API_STANCESTATS",     COLLECT_STANCE_STATS)
+COLLECT_VEHICLE_STATS           = env_bool("STATS_API_VEHICLESTATS",    COLLECT_VEHICLE_STATS)
+COLLECT_VEHICLE_TELEMETRY       = env_bool("STATS_API_VEHICLE_TELEMETRY", COLLECT_VEHICLE_TELEMETRY)
+COLLECT_VEHICLE_DAMAGE          = env_bool("STATS_API_VEHICLE_DAMAGE",  COLLECT_VEHICLE_DAMAGE)
 COLLECT_WEAPON_FIRE             = env_bool("STATS_API_WEAPON_FIRE",     COLLECT_WEAPON_FIRE)
 DUMP_STATS_DATA                 = env_bool("STATS_API_DUMPJSON",        DUMP_STATS_DATA)
 SUBMIT_TO_API                   = env_bool("STATS_SUBMIT",              SUBMIT_TO_API)
@@ -144,6 +150,7 @@ local movement                  = gs_require("movement")
 local gamelog                   = gs_require("gamelog")
 local events                    = gs_require("events")
 local objectives                = gs_require("objectives")
+local vehicle                   = gs_require("vehicle")
 local gather                    = gs_require("gather")
 local api                       = gs_require("api")
 local stats                     = gs_require("stats")
@@ -188,6 +195,9 @@ local function build_cfg()
         collect_movement_stats  = COLLECT_MOVEMENT_STATS,
         collect_stance_stats    = COLLECT_STANCE_STATS,
         collect_gamelog         = COLLECT_GAMELOG,
+        collect_vehicle_stats   = COLLECT_VEHICLE_STATS,
+        collect_vehicle_telemetry = COLLECT_VEHICLE_TELEMETRY,
+        collect_vehicle_damage  = COLLECT_VEHICLE_DAMAGE,
         collect_weapon_fire     = COLLECT_WEAPON_FIRE,
         dump_stats_data         = DUMP_STATS_DATA,
         submit_to_api           = SUBMIT_TO_API,
@@ -261,6 +271,9 @@ local function initialize_map_config()
 
     local map_config = map_configs[mapname]
     objectives.init_map(map_config, common_buildables)
+    if COLLECT_VEHICLE_STATS then
+        vehicle.init_map(map_config)
+    end
 
     if log_mod then
         local round = tonumber(et.trap_Cvar_Get("g_currentRound")) == 0 and 1 or 2
@@ -343,21 +356,24 @@ function et_InitGame()
     players.init(log_mod, maxClients)
     movement.init(log_mod, maxClients)
     gamelog.init(COLLECT_GAMELOG)
-    events.init(cfg, log_mod, players, gamelog, objectives)
-    objectives.init(cfg, log_mod, players, gamelog)
+    vehicle.init(cfg, log_mod, players, gamelog)
+    events.init(cfg, log_mod, players, gamelog, objectives, COLLECT_VEHICLE_STATS and vehicle or nil)
+    objectives.init(cfg, log_mod, players, gamelog, COLLECT_VEHICLE_STATS and vehicle or nil)
     scores.init(cfg, log_mod, http, gamestate)
     ng_scores.init(cfg, log_mod, scores, http, gather)
     gather.init(cfg, log_mod, http, api, scores)
     api.init(cfg, log_mod, http, gather, VERSION)
     api.set_server_info(server_ip, server_port)
     stats.init(cfg, log_mod, http, api,
-               movement, objectives, events, gamelog, players, VERSION, scores)
+               movement, objectives, events, gamelog, players, VERSION, scores,
+               COLLECT_VEHICLE_STATS and vehicle or nil)
     gamestate.init(cfg, log_mod, {
         players    = players,
         movement   = movement,
         gamelog    = gamelog,
         events     = events,
         objectives = objectives,
+        vehicle    = COLLECT_VEHICLE_STATS and vehicle or nil,
         gather     = gather,
         api        = api,
         stats      = stats,
@@ -380,6 +396,8 @@ function et_InitGame()
         log_mod.debug(string.format("  collect_movement    : %s", bool(COLLECT_MOVEMENT_STATS)))
         log_mod.debug(string.format("  collect_stance      : %s", bool(COLLECT_STANCE_STATS)))
         log_mod.debug(string.format("  collect_weapon_fire : %s", bool(COLLECT_WEAPON_FIRE)))
+        log_mod.debug(string.format("  collect_vehicle     : %s  telemetry=%s damage=%s",
+            bool(COLLECT_VEHICLE_STATS), bool(COLLECT_VEHICLE_TELEMETRY), bool(COLLECT_VEHICLE_DAMAGE)))
         log_mod.debug(string.format("  auto_rename         : %s", bool(AUTO_RENAME)))
         log_mod.debug(string.format("  auto_sort           : %s", bool(AUTO_SORT)))
         log_mod.debug(string.format("  auto_start          : %s", bool(AUTO_START)))
@@ -443,8 +461,24 @@ end
 
 -- ============================================================ --
 
+-- TWO CLOCKS, do not mix them. They run several seconds apart and the offset drifts.
+--
+--   frame_level_time       -- the level clock the engine passes to this callback. Use it for
+--                             intervals inside one module, and to pair with values the engine
+--                             itself stamps in level time: CS_LEVEL_START_TIME
+--                             (events.calc_reinf_time) and pers.lastSpawnTime
+--                             (movement.track). Those two are correct as-is -- do not
+--                             "fix" them to now_ms or spawn/reinforce detection breaks.
+--   et.trap_Milliseconds() -- the timeline clock. gamelog.record stamps every event with it,
+--                             gamestate.round_end_time uses it, and the pause markers whose
+--                             drift ingest subtracts are measured on it.
+--
+-- Rule: anything that becomes a timestamp, or is compared against one, uses now_ms.
+-- Passing frame_level_time to the telemetry ticks put vehicle_pos/carrier_pos ~6s ahead of
+-- round_end and left the 3s damage/repair attribution windows comparing across the offset.
 function et_RunFrame(frame_level_time)
     level_time = frame_level_time
+    local now_ms = et.trap_Milliseconds()
 
     http.poll_pending(frame_level_time)
 
@@ -472,8 +506,9 @@ function et_RunFrame(frame_level_time)
 
     -- Pause markers: emit pause/unpause gamelog events on CS_SERVERTOGGLES transitions
     -- while a round is live. Ingest uses the pair to subtract paused time from the timeline.
-    if COLLECT_GAMELOG and current_gs == et.GS_PLAYING then
-        local paused = server_is_paused()
+    local is_playing = current_gs == et.GS_PLAYING
+    local paused     = is_playing and server_is_paused() or false
+    if COLLECT_GAMELOG and is_playing then
         if paused ~= _was_paused then
             if paused then gamelog.pause_start() else gamelog.pause_end() end
             _was_paused = paused
@@ -482,8 +517,21 @@ function et_RunFrame(frame_level_time)
         _was_paused = false
     end
 
+    -- now_ms, not frame_level_time: these emit timestamped telemetry and compare against
+    -- stamps taken with et.trap_Milliseconds() elsewhere (vehicle.on_damage via events.lua,
+    -- vehicle.on_repair via objectives.lua).
+    if COLLECT_VEHICLE_STATS then
+        vehicle.tick(now_ms, paused, is_playing)
+    end
+    -- carrier upkeep: manual-drop (+dropobj) detection + carrier telemetry
+    if (COLLECT_OBJ_STATS or COLLECT_GAMELOG) and is_playing and not paused then
+        objectives.tick(now_ms)
+    end
+
+    -- now_ms so both ends of the round are measured on the timeline clock: round_end_time
+    -- is et.trap_Milliseconds() (gamestate.lua), as is et_InitGame's round_start_time.
     if current_gs == et.GS_PLAYING and gamestate.round_start_time == 0 then
-        gamestate.round_start_time = frame_level_time
+        gamestate.round_start_time = now_ms
         gamestate.round_start_unix = os.time()
     end
 
@@ -518,9 +566,11 @@ end
 
 function et_InitGame_Restart()
     log_mod.buffer_start()
+    -- reset first: gamestate.reset() clears objectives (incl. its map config),
+    -- so the map re-init must come after it
+    gamestate.reset(server_ip, server_port)
     initialize_map_config()
     events.parse_reinf_times()
-    gamestate.reset(server_ip, server_port)
     gamelog.round_start()
     gamestate.round_start_time = et.trap_Milliseconds()
     gamestate.round_start_unix = os.time()
@@ -542,6 +592,9 @@ function et_ClientBegin(clientNum)
 end
 
 function et_ClientDisconnect(clientNum)
+    if COLLECT_OBJ_STATS then
+        objectives.handle_disconnect(clientNum)
+    end
     players.on_disconnect(clientNum, movement)
     if AUTO_RENAME or AUTO_START then
         gather.on_disconnect(clientNum)

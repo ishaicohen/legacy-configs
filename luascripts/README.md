@@ -68,15 +68,32 @@ Keyed by GUID. Each entry includes:
 | `obj_defused` | object | Same |
 | `obj_destroyed` | object | Same |
 | `obj_repaired` | object | Same |
-| `obj_taken` | object | Same |
+| `obj_taken` | object | Same — initial steal from the objective's stand |
+| `obj_repickup` | object | Same — re-pickup of a dropped objective (distinct from the initial steal) |
+| `obj_dropped` | object | Same — carrier died, disconnected, or dropped manually (`+dropobj`) while holding the objective |
 | `obj_secured` | object | Same |
 | `obj_returned` | object | Same |
-| `obj_carrierkilled` | object | `{ leveltime: { victim, weapon, objective, timestamp_unix } }` |
+| `obj_carrierkilled` | object | `{ leveltime: { victim, weapon, objective, timestamp_unix } }` — credited to the **killer** of an enemy objective carrier; `victim` is the carrier's GUID. Selfkills/teamkills/world deaths never produce this (the carrier's side is `obj_dropped`). |
 | `obj_flagcaptured` | object | `{ leveltime: { objective, timestamp_unix } }` |
 | `obj_misc` | object | Same |
-| `obj_escort` | object | Same |
 | `shoves_given` | object | `{ leveltime: { objective (target GUID), timestamp_unix } }` |
 | `shoves_received` | object | Same |
+| `obj_vehicle` | object | `COLLECT_VEHICLE_STATS` per-player vehicle stats (see below) |
+
+> **Deprecation notice:** `obj_escort` (one-shot proximity attribution at the map's escort
+> announce) was removed in 2.7.0. Its replacement is `obj_vehicle.escort` — cumulative
+> per-vehicle time/distance — which tells the whole story instead of a single snapshot.
+> The point-in-time facts moved to the gamelog: `vehicle_started.escorts` = who was there
+> for the steal, `vehicle_finale.escorts` = who was at the delivery. Parsers reading
+> `obj_escort` will simply stop seeing the key.
+
+**`obj_vehicle` fields** (each key optional — only present when earned):
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `escort` | object | Per-vehicle map: `{ [vehicle]: { time_s, distance } }` — seconds and game units accrued while alive, on the escorting team, within the escort radius (default 500u) of that vehicle **while it was moving**; accrual keeps accumulating across damage/repair/stop cycles. |
+| `damage` | object | `{ damage, hits }` — damage dealt to escort vehicles (`COLLECT_VEHICLE_DAMAGE` only) |
+| `repairs` | number | Vehicle repairs completed (`COLLECT_VEHICLE_DAMAGE` only) |
 
 **`stance_stats_seconds` fields:**
 
@@ -157,8 +174,8 @@ Ordered array of all events that occurred during the round. Every entry has:
 | `match_id` | string | Match ID (injected at save time) |
 | `round_id` | number | Round number (injected at save time) |
 | `unixtime` | number | Wall-clock timestamp in **milliseconds** when the event was recorded. |
-| `leveltime` | number | Server level time (ms) when the event was recorded. Raw as emitted — see the pause note below. |
-| `group` | string | `"player"` or `"server"` |
+| `leveltime` | number | Server level time (ms) when the event was recorded. Raw as emitted — see the pause note below. Path telemetry (`carrier_pos` / `vehicle_pos`) is the one exception: it carries the time the *position* was sampled, which can be a few frames before the event was emitted (see the `carrier_pos` section). |
+| `group` | string | `"player"`, `"server"` or `"vehicle"` |
 | `label` | string | Event type (see below) |
 | ...fields | — | Event-specific fields |
 
@@ -284,12 +301,199 @@ Ordered array of all events that occurred during the round. Every entry has:
 | `vsay_text` | Custom text for vsay commands with extra args (optional) |
 
 **Objective events** — `obj_planted`, `obj_defused`, `obj_destroyed`, `obj_repaired`,
-`obj_taken`, `obj_secured`, `obj_returned`, `obj_carrierkilled`
+`obj_taken`, `obj_repickup`, `obj_secured`, `obj_returned`
 
 | Field | Description |
 |-------|-------------|
 | `player` | GUID |
 | `objective` | Objective name from config |
+| `pos` | `"x y z"` — the acting player's origin when the event fired. See the table below for the exceptions. |
+| `run` | Carry-run id, on the labels that bound a run (`obj_taken`, `obj_repickup`, `obj_secured`, `obj_returned`). See [Grouping samples into runs](#grouping-samples-into-runs) for what it means on each. 2.7.2+ |
+
+> **Changed in 2.7.2.** Before 2.7.2 only the carry cycle carried a position
+> (`obj_taken` / `obj_repickup` / `obj_secured`, plus `obj_dropped`); everything else had
+> none, which is why plants, defuses, destructions, repairs and flag captures could not be
+> drawn on a replay. No version gate is needed to consume this: an event either carries a
+> position or it does not, and older reports simply show fewer markers.
+
+Where each position comes from:
+
+| Label | `pos` is |
+|-------|----------|
+| `obj_taken`, `obj_repickup` | where the carry run started |
+| `obj_secured` | where it ended — the same reading as the run's final `carrier_pos` |
+| `obj_dropped` | where the objective was lost, likewise shared with the closing sample |
+| `obj_planted`, `obj_defused` | the engineer's origin, i.e. the charge |
+| `obj_repaired` | the engineer's origin |
+| `obj_returned` | the returner's origin — they had to reach the objective to return it, so this is where it was lying. A `WORLD` return (the objective timing out back to its stand after being dropped and left) has no actor and falls back to the position the carry ended at, which is the same spot |
+| `obj_destroyed` | **dynamite:** the position the charge was *planted* at, remembered from `obj_planted` — the destruction fires ~30s after the plant, by which time the planter is usually dead or respawned across the map. **Announce-only destructions** (command posts, satchel, direct fire): the destroyed entity's own origin, taken from the `et_Damage` record that attributed it. Never the attacker's position — a satchel has to be placed on the target, but a panzerfaust or tank shell can take a command post from across the map |
+
+`pos` is absent only when no trustworthy source existed: an origin reading that failed
+validation (see the `carrier_pos` section on closing points), or a brush entity reporting
+`0 0 0`. An absent `pos` is always a deliberate omission rather than a zero — the field is
+simply not present, and never a placeholder coordinate.
+
+**`obj_carrierkilled`** — killed an enemy objective carrier (killer-credited; never
+emitted for selfkills, teamkills, or world deaths)
+
+| Field | Description |
+|-------|-------------|
+| `player` | Killer GUID |
+| `victim` | Carrier GUID |
+| `objective` | Objective the victim was carrying |
+| `weapon` | meansOfDeath |
+| `pos` | Killer origin (follows `kill`'s `killer_pos`). 2.7.2+ |
+| `victim_pos` | Carrier origin — where the objective went down, and the same reading as the run's closing `carrier_pos`. This is the useful one for a replay. 2.7.2+ |
+| `run` | The **victim's** carry run that this kill ended. The event is credited to the killer but describes the victim's run. 2.7.2+ |
+
+Attribution comes from the engine console lines directly (`Item:` line preceding the
+steal/return popup, `Objective_Destroyed: <clientNum>`, `Repair: <clientNum>`); announce-only
+destructions (e.g. command posts) are attributed via the most recent `et_Damage` hit on the
+entity. `obj_taken` is the initial steal from the stand; `obj_repickup` is a pickup of a
+dropped objective.
+
+**`obj_dropped`** — carrier lost the objective without securing/returning it: death,
+disconnect, or a manual `+dropobj`. Manual drops emit no console line at all — they are
+detected by polling the carrier's flag powerup (`PW_REDFLAG`/`PW_BLUEFLAG`) each frame.
+
+| Field | Description |
+|-------|-------------|
+| `player` | GUID of the carrier who dropped it |
+| `objective` | Objective name from config |
+| `pos` | `"x y z"` drop position (absent if unresolvable) |
+
+**Vehicle events** (`group: "vehicle"`) — emitted by entity-state tracking of escort
+vehicles (script_movers), enabled by `COLLECT_VEHICLE_STATS`. All carry a `vehicle` field
+(the entity's scriptName, e.g. `"tank"`).
+
+| Label | Extra fields | Description |
+|-------|--------------|-------------|
+| `vehicle_started` | `pos`, `escorts?` | Vehicle moved for the first time this round — `escorts` = who was there for the steal |
+| `vehicle_moving` | `pos`, `escorts?` | Vehicle resumed moving after a stop |
+| `vehicle_stopped` | `pos`, `segment_distance`, `escorts?` | No displacement for >1s; distance of the completed segment |
+| `vehicle_damaged` | `player?`, `pos` | Health hit 0 (disabled); `player` = last damager if attributable |
+| `vehicle_repaired` | `player?`, `pos` | Health restored; `player` = repairing engineer via `Repair:` line |
+| `vehicle_pos` | `pos`, `escorts?` | Path-vertex position sample while moving (`COLLECT_VEHICLE_TELEMETRY` only) |
+| `vehicle_damage` | `player`, `damage` | Per-hit vehicle damage, clamped to the vehicle's remaining health (`COLLECT_VEHICLE_DAMAGE` only) |
+| `vehicle_finale` | `pos`, `escorts?` | The map's escort announce fired (destination reached); `escorts` = owning-team players at the destination |
+| `vehicle_summary` | `total_distance`, `moving_time_s`, `damaged_count`, `repaired_count` | One per vehicle that entered play, at round end |
+
+`escorts` is the array of player GUIDs accruing escort credit at that moment (alive,
+escorting team, within the escort radius while the vehicle moves); omitted when empty.
+
+**`obj_damage`** — damage to a non-vehicle damageable objective (command post, breach walls,
+barriers); `COLLECT_VEHICLE_DAMAGE` only. Restricted to `ET_CONSTRUCTIBLE` entities — the
+engine fires the damage hook for every damageable entity, so corpse gib damage (`ET_CORPSE`)
+and decorative breakables (`func_explosive`, `props_*` chairs/windows/paintings) are filtered
+out here rather than polluting the stream. `damage` is clamped to the objective's remaining
+health so an overkill (e.g. an airstrike on a near-dead wall) reports only the fraction that
+landed. Trucks never emit these: they are not damageable (`takedamage 0`).
+
+| Field | Description |
+|-------|-------------|
+| `player` | Attacker GUID |
+| `damage` | Damage dealt, clamped to the objective's remaining health |
+| `target` | Entity name (objective `track`, falling back to scriptName/classname) |
+
+**`carrier_pos`** — objective-carrier position sample (`COLLECT_VEHICLE_TELEMETRY` only)
+
+| Field | Description |
+|-------|-------------|
+| `player` | Carrier GUID |
+| `objective` | Objective being carried |
+| `pos` | `"x y z"` path vertex — see below |
+| `run` | Carry-run id — see [Grouping samples into runs](#grouping-samples-into-runs). 2.7.2+ |
+
+Carrier and vehicle positions are read every frame but emitted only where the path
+turns (`stats/util/pathgate.lua`), because these points are drawn as a polyline: a
+fixed cadence oversamples straight corridors while still cutting corners, and a
+carrier at `g_speed 320` covers ~400 units in a second. The emitted polyline stays
+within ~48 units of the real path (~64 for vehicles), with extra points at height
+changes, at direction reversals, on coming to a stop, and once a second while
+stationary. Spacing is therefore irregular — consume it by `leveltime`, never by
+assuming a fixed interval.
+
+**Carriers additionally have a 10 Hz spacing floor while they are moving** (2.7.2+,
+`move_gap_ms`). Corner vertices alone describe a route's shape but chord across it, so a
+strafe-jumped or circle-strafed approach measures shorter than it was; the floor puts
+samples ~32 units apart at `g_speed 320`, inside the corridor tolerance, so the polyline
+is the route rather than an approximation of it. The floor is gated on distance covered,
+not on frame count, so volume remains independent of `sv_fps` (which ranges 40–125 across
+the shipped configs) — verified at 49 points for the same ground at `sv_fps` 125, 50 and
+20. A carrier standing still never trips it and stays on the 1 Hz keepalive.
+
+Vehicles keep pure vertex gating: an escort truck runs 8+ minutes on a fixed spline, where
+a floor would cost thousands of points and buy no fidelity.
+
+Budget: the floor costs ~1.6x total gamelog events on the heaviest round in the reference
+set (`decay_sw` round 1, 212.6s of carry time — 423 `carrier_pos` before, ~2100 after).
+Expect roughly `10 x carry_seconds` samples per round.
+
+#### Grouping samples into runs
+
+From 2.7.2 every `carrier_pos` carries a `run`, a per-round id allocated on each pickup and
+shared with the events that bound that carry. **Group by `run` to partition a round's
+samples into carries.** Ids start at 1 each round, count in pickup order, and are shared
+across objectives.
+
+| Label | Relationship to `run` |
+|-------|-----------------------|
+| `obj_taken`, `obj_repickup` | opens the run |
+| `carrier_pos` | belongs to it |
+| `obj_secured`, `obj_dropped` | closes it |
+| `obj_carrierkilled` | closes it — credited to the killer, but the id is the **victim's** run |
+| `obj_returned` | names the run it **terminated**, which has normally already closed. An objective is returned while it lies on the ground, so the return follows an `obj_dropped` rather than ending a live carry: the id says this carry ended in a reset rather than in someone picking the objective back up. After a re-pickup it names the latest run, not the first. |
+
+This is not a convenience. `(player, objective)` does not identify a carry: on
+`karsiah_te2` round 1 of match `075fe912` a single player takes `north_documents` four
+separate times. Before 2.7.2 the only way to partition was to replay the surrounding
+events in array order, and a consumer that gets that state machine wrong fuses two
+disjoint carries into one and draws a segment across the map. Pre-2.7.2 reports still
+require that fallback.
+
+**`leveltime` is when the position was sampled, not when the event was emitted.** A
+corner vertex is only recognised once the entity has moved off the corridor, so it
+is emitted a few frames late (measured worst case ~150ms) and backdated to the frame
+it was actually sampled at. Coordinate and timestamp therefore always describe the
+same instant, at the cost of `carrier_pos` sometimes appearing in the array slightly
+after an event with a later `leveltime`. Within one run the samples are non-decreasing
+in `leveltime` and none exceeds the event that ends the run; across runs and across
+carriers the streams interleave, so ordering *between* them is `event_index`, i.e. array
+order. (This holds from 2.7.2 — see the clock note below for what pre-2.7.2 reports do.)
+
+Each carry run is closed out with a final `carrier_pos` at the exact position where
+it ended, emitted before the `obj_secured` / `obj_dropped` / `obj_carrierkilled` event
+that ends it, and nothing is emitted for that player afterwards. Without it the drawn
+route would stop at the last corner, up to `max_seg` (512u) short of the truth. It is
+skipped only when the run happened to end on a point the gate had already emitted.
+
+From 2.7.2 that closing origin is **validated before use**, and the run-ending event reuses
+the same reading rather than taking its own. A reading is rejected if it is missing, exactly
+`0 0 0`, or further from the last sampled vertex than a player could have travelled (2000u).
+The `handle_disconnect` path is why: it runs from `et_ClientDisconnect`, where the entity may
+already be torn down. When a reading is rejected the closing sample is omitted and the
+run-ending event carries **no `pos`** — the event itself is still emitted. Two guarantees
+follow: `obj_secured` / `obj_dropped` / `obj_carrierkilled.victim_pos` always equal the run's
+final `carrier_pos`, and no coordinate is ever a placeholder.
+
+> **Changed in 2.7.2 — affects reading stored reports.** On 2.7.1 and earlier, `carrier_pos`
+> and `vehicle_pos` are stamped on the engine's frame clock while every other event is
+> stamped with `et.trap_Milliseconds()`. The two run several seconds apart (measured ~10.2s
+> on `karsiah_te2` round 1 of match `075fe912`, ~3.3s for `vehicle_pos` on `supply`), so in
+> those reports telemetry `leveltime` is **not comparable** to any other event's, samples
+> appear after `round_end`, and each run's closing point sorts *before* its own approach —
+> which draws as a straight line across the map. **Read pre-2.7.2 telemetry in array order,
+> not `leveltime` order**; the coordinates themselves are correct and the routes are
+> continuous when read that way. From 2.7.2 both clocks are the timeline clock and either
+> ordering works.
+
+> **Changed in 2.7.1.** Rounds recorded on 2.7.0 carry `carrier_pos` / `vehicle_pos` at a
+> flat 1s cadence, with the emit-time `leveltime` and no closing point. They remain valid
+> input — spacing was never load-bearing — but a 2.7.0 route is corner-cut by up to ~400
+> units and ends short of the objective, so per-round route comparisons across the boundary
+> are not like-for-like. `ComputeCarrierDistances` totals shift slightly for the same reason:
+> corner chords stop cutting corners (more accurate, marginally higher) while sub-tolerance
+> strafe jitter stops being counted (marginally lower).
 
 **`obj_flag_captured`**
 
@@ -297,6 +501,12 @@ Ordered array of all events that occurred during the round. Every entry has:
 |-------|-------------|
 | `player` | GUID |
 | `flag` | Flag name (`allies_flag`, `axis_flag`, or config key) |
+| `pos` | The credited player's origin. 2.7.2+ |
+| `flag_pos` | The checkpoint entity's own position. 2.7.2+ |
+
+Credit is proximity-based and given to every player within range of the flag, so one capture
+can produce several events: `pos` says who was there, `flag_pos` says where "there" was and is
+the same on all of them.
 
 **`pickup`** — console-log pickup/use event
 
@@ -433,7 +643,8 @@ interface ObjStatEntry {
   timestamp_unix: UnixTime;
 }
 
-/** Carrier-kill entry — keyed by leveltime (as string). */
+/** Carrier-kill entry — keyed by leveltime (as string).
+ *  Recorded under the KILLER's guid; victim is the carrier they killed. */
 interface ObjCarrierKilledEntry {
   victim:         Guid;
   weapon:         number;
@@ -467,16 +678,35 @@ interface PlayerStat {
   obj_destroyed?:     ObjStatMap;
   obj_repaired?:      ObjStatMap;
   obj_taken?:         ObjStatMap;
+  obj_repickup?:      ObjStatMap;
+  obj_dropped?:       ObjStatMap;
   obj_secured?:       ObjStatMap;
   obj_returned?:      ObjStatMap;
-  obj_carrierkilled?: ObjCarrierKilledMap;
+  obj_carrierkilled?: ObjCarrierKilledMap;  // killer-credited (see entry type)
   obj_flagcaptured?:  ObjStatMap;
   obj_misc?:          ObjStatMap;
-  obj_escort?:        ObjStatMap;
 
   // COLLECT_SHOVE_STATS — objective field contains the other player's GUID
   shoves_given?:    ObjStatMap;
   shoves_received?: ObjStatMap;
+
+  // COLLECT_VEHICLE_STATS
+  obj_vehicle?: PlayerVehicleStats;
+
+  /** @deprecated removed in 2.7.0 — superseded by obj_vehicle.escort (per-vehicle
+   *  time/distance + finale). Never present in 2.7.0+ payloads. */
+  obj_escort?: ObjStatMap;
+}
+
+interface PlayerVehicleEscort {
+  time_s:   number;   // accrued while that vehicle moved
+  distance: number;
+}
+
+interface PlayerVehicleStats {
+  escort?:  Record<string, PlayerVehicleEscort>;  // keyed by vehicle scriptName
+  damage?:  { damage: number; hits: number };     // COLLECT_VEHICLE_DAMAGE only
+  repairs?: number;                               // COLLECT_VEHICLE_DAMAGE only
 }
 
 type PlayerStats = Record<Guid, PlayerStat>;
@@ -488,7 +718,7 @@ interface GamelogEventBase {
   round_id:  number;
   unixtime:  number;     // wall-clock ms since Unix epoch (raw; includes pause time)
   leveltime: LevelTime;  // server ms since map load (raw; paused time removed in ingest)
-  group:     "player" | "server";
+  group:     "player" | "server" | "vehicle";
   label:     string;
 }
 
@@ -604,20 +834,115 @@ interface MessageEvent extends GamelogEventBase {
 }
 
 type ObjectiveLabel = "obj_planted" | "obj_defused" | "obj_destroyed" | "obj_repaired"
-                    | "obj_taken"   | "obj_secured" | "obj_returned"  | "obj_carrierkilled";
+                    | "obj_taken"   | "obj_repickup" | "obj_secured" | "obj_returned";
+
+/** Per-round carry-run id, 2.7.2+. Allocated on each pickup from 1, shared by the
+ *  run's carrier_pos samples and the events that open and close it. Group by this
+ *  rather than by (player, objective) — one player can carry one objective several
+ *  times in a round. Absent before 2.7.2. */
+type CarryRun = number;
 
 interface ObjectiveEvent extends GamelogEventBase {
   group:     "player";
   label:     ObjectiveLabel;
   player:    Guid;
   objective: string;
+  /** Acting player's origin. 2.7.2+ on every label; before that only on
+   *  obj_taken / obj_repickup / obj_secured. Two labels use a different source:
+   *  obj_destroyed is the charge's plant position, or the destroyed entity's own
+   *  origin for announce-only destructions; a WORLD obj_returned is where the
+   *  carry ended. Absent only where no trustworthy source existed — see the
+   *  per-label table in the docs. */
+  pos?:      Position;
+  /** Only on the labels that bound a run. */
+  run?:      CarryRun;
 }
+
+// Killed an enemy objective carrier — killer-credited
+interface ObjCarrierKilledEvent extends GamelogEventBase {
+  group:      "player";
+  label:      "obj_carrierkilled";
+  player:     Guid;    // killer
+  victim:     Guid;    // carrier
+  objective:  string;
+  weapon:     number;
+  pos?:       Position;  // killer origin, 2.7.2+
+  /** Carrier origin — where the objective went down. 2.7.2+ */
+  victim_pos?: Position;
+  /** The *victim's* run, which this kill ends. 2.7.2+ */
+  run?:       CarryRun;
+}
+
+interface ObjDroppedEvent extends GamelogEventBase {
+  group:     "player";
+  label:     "obj_dropped";
+  player:    Guid;
+  objective: string;
+  /** null when the origin reading failed validation (e.g. a torn-down entity on
+   *  the disconnect path). Never a placeholder coordinate. */
+  pos:       Position | null;
+  run?:      CarryRun;  // 2.7.2+
+}
+
+interface CarrierPosEvent extends GamelogEventBase {  // COLLECT_VEHICLE_TELEMETRY
+  group:     "player";
+  label:     "carrier_pos";
+  player:    Guid;
+  objective: string;
+  pos:       Position;   // path vertex; spacing is irregular, use leveltime
+  /** 2.7.2+. Group by this to partition a round's samples into carries. */
+  run?:      CarryRun;
+}
+
+// ─── vehicle events (COLLECT_VEHICLE_STATS) ────────────────────────────────
+
+interface VehicleEventBase extends GamelogEventBase {
+  group:   "vehicle";
+  vehicle: string;  // entity scriptName, e.g. "tank"
+}
+
+// escorts: GUIDs accruing escort credit at that moment; omitted when empty
+interface VehicleStartedEvent  extends VehicleEventBase { label: "vehicle_started";  pos: Position; escorts?: Guid[]; }
+interface VehicleMovingEvent   extends VehicleEventBase { label: "vehicle_moving";   pos: Position; escorts?: Guid[]; }
+interface VehicleStoppedEvent  extends VehicleEventBase { label: "vehicle_stopped";  pos: Position; segment_distance: number; escorts?: Guid[]; }
+interface VehicleDamagedEvent  extends VehicleEventBase { label: "vehicle_damaged";  pos: Position; player?: Guid; }
+interface VehicleRepairedEvent extends VehicleEventBase { label: "vehicle_repaired"; pos: Position; player?: Guid; }
+interface VehiclePosEvent      extends VehicleEventBase { label: "vehicle_pos";      pos: Position; escorts?: Guid[]; }  // COLLECT_VEHICLE_TELEMETRY
+interface VehicleDamageEvent   extends VehicleEventBase { label: "vehicle_damage";   player: Guid; damage: number; }  // COLLECT_VEHICLE_DAMAGE
+interface VehicleFinaleEvent   extends VehicleEventBase { label: "vehicle_finale";   pos: Position; escorts?: Guid[]; }
+
+// COLLECT_VEHICLE_DAMAGE: damage to ET_CONSTRUCTIBLE objectives (CP, breach
+// walls, barriers). Corpses and decorative breakables are filtered out.
+interface ObjDamageEvent extends GamelogEventBase {
+  group:  "player";
+  label:  "obj_damage";
+  player: Guid;
+  damage: number;  // clamped to the objective's remaining health
+  target: string;  // objective track name, falling back to scriptName/classname
+}
+interface VehicleSummaryEvent  extends VehicleEventBase {
+  label:          "vehicle_summary";
+  total_distance: number;
+  moving_time_s:  number;
+  damaged_count:  number;
+  repaired_count: number;
+}
+
+type VehicleEvent =
+  | VehicleStartedEvent | VehicleMovingEvent | VehicleStoppedEvent
+  | VehicleDamagedEvent | VehicleRepairedEvent | VehiclePosEvent
+  | VehicleDamageEvent | VehicleFinaleEvent | VehicleSummaryEvent;
 
 interface FlagCapturedEvent extends GamelogEventBase {
   group:  "player";
   label:  "obj_flag_captured";
   player: Guid;
   flag:   string;
+  /** Credited player's origin. Credit is proximity-based and given to everyone in
+   *  range, so one capture can produce several of these events. 2.7.2+ */
+  pos?:      Position;
+  /** The checkpoint entity's own position — identical across those events. 2.7.2+ */
+  flag_pos?: Position;
 }
 
 interface PickupEvent extends GamelogEventBase {
@@ -662,8 +987,9 @@ interface UnpauseEvent    extends GamelogEventBase { group: "server"; label: "un
 type GamelogEvent =
   | SpawnEvent | KillEvent | SuicideEvent | TeamkillEvent | DamageEvent
   | ReviveEvent | ClassChangeEvent | MessageEvent
-  | ObjectiveEvent | FlagCapturedEvent | PickupEvent | ShoveEvent
-  | WeaponFireEvent
+  | ObjectiveEvent | ObjCarrierKilledEvent | ObjDroppedEvent | ObjDamageEvent
+  | FlagCapturedEvent | PickupEvent | ShoveEvent
+  | WeaponFireEvent | CarrierPosEvent | VehicleEvent
   | RoundStartEvent | RoundEndEvent | PauseEvent | UnpauseEvent;
 
 // ─── metadata ──────────────────────────────────────────────────────────────
@@ -742,14 +1068,14 @@ The match-ID endpoint is called as `GET {API_URL_MATCHID}/{server_ip}/{server_po
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `JSON_FILEPATH` | `""` (auto-detect) | Shared output directory for both `game_stats.log` and JSON dumps (when `DUMP_STATS_DATA = true`). Empty auto-resolves to `<fs_homepath>/legacy/`. Override via `STATS_API_PATH`. |
-| `LOG_FILEPATH` | derived | Always `JSON_FILEPATH .. "game_stats.log"` — not configurable separately. Set `STATS_API_PATH` to relocate both outputs. |
+| `JSON_FILEPATH` | `""` (auto-detect) | Shared output directory for both `stats.log` and JSON dumps (when `DUMP_STATS_DATA = true`). Empty auto-resolves to `<fs_homepath>/legacy/`. Override via `STATS_API_PATH`. |
+| `LOG_FILEPATH` | derived | Always `JSON_FILEPATH .. "stats.log"` — not configurable separately. Set `STATS_API_PATH` to relocate both outputs. |
 
 ### [COLLECTION]
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `LOGGING_ENABLED` | `true` | Enable/disable the log file entirely |
+| `LOGGING_ENABLED` | `false` | Enable/disable the log file entirely |
 | `LOG_LEVEL` | `"info"` | `"info"` logs key lifecycle events. `"debug"` logs every per-event trace (verbose, high volume — only use for troubleshooting). |
 | `COLLECT_GAMELOG` | `true` | Record the in-round event timeline. Disabling this also suppresses kills, damage, chat, objectives, revives, class changes, and shoves from the output. |
 | `COLLECT_WEAPON_FIRE` | `false` | Record every weapon shot (`weapon_fire` gamelog events). **Very high volume** — one entry per bullet/shell fired by every player. Only enable for short controlled analysis sessions, never in normal production use. Covers both player weapons and fixed MG42s. |
@@ -757,6 +1083,9 @@ The match-ID endpoint is called as `GET {API_URL_MATCHID}/{server_ip}/{server_po
 | `COLLECT_SHOVE_STATS` | `true` | Shove tracking in `player_stats` and `gamelog` |
 | `COLLECT_MOVEMENT_STATS` | `true` | Distance travelled and speed in `player_stats` |
 | `COLLECT_STANCE_STATS` | `true` | Stance-time breakdown in `player_stats` |
+| `COLLECT_VEHICLE_STATS` | `true` | Entity-state escort vehicle tracking: per-player escort credit (`player_stats.obj_vehicle.escort`) and `vehicle_*` timeline events in `gamelog`. Active only on maps with an `escort` config section — its entry names (or `script_name` keys) pin the vehicle script_movers; maps without one have no vehicle and are skipped entirely. |
+| `COLLECT_VEHICLE_TELEMETRY` | `true` | Path position samples for moving vehicles (`vehicle_pos`) and objective carriers (`carrier_pos`), enabling route replay. Sampled per frame; volume is independent of `sv_fps` in both cases. **Vehicles** emit only where the path turns — at or below one point per second (~200 events per escort round). **Carriers** additionally hold a 10 Hz floor while moving (2.7.2+), giving ~32 units between samples so carry distance is measured rather than estimated: expect roughly `10 x carry_seconds` per round (~2100 on the heaviest round measured, versus 423 under pure vertex gating), and 1 Hz while a carrier stands still. |
+| `COLLECT_VEHICLE_DAMAGE` | `true` | Per-player damage tracking for damageable objectives: `vehicle_damage` events + `player_stats.obj_vehicle.damage` / `.repairs` for vehicles, and `obj_damage` events for `ET_CONSTRUCTIBLE` objectives (command posts, breach walls, barriers). Corpse gibs and decorative breakables are filtered out; damage is clamped to remaining health. Trucks are not damageable and never emit these. |
 
 ### [OUTPUT]
 
@@ -777,7 +1106,7 @@ the corresponding flag set (`auto_rename`, `auto_sort`, `auto_start`). They have
 | `AUTO_START` | `false` | Countdown to `scheduled_start` from match data and force-start via `ref allready`. Includes a late-join 5-second countdown if all players arrive after the scheduled time. |
 | `AUTO_MAP` | `false` | Automatically switch to the next map in the match rotation after round 2 intermission ends. |
 | `AUTO_CONFIG` | `false` | Apply server config via `ref config <name>` based on roster player count at map 1 round 1 warmup. |
-| `AUTO_SCORES` | `false` | Track match scores using ET stopwatch rules. Active for **gather matches** (requires `auto_scores=true` in match data, BO3 termination enforced) and **ng matches** (always-on when no gather match is active, scores accumulate indefinitely). Embeds current score state into stats submissions as `metadata.scores`. Announces score in chat during intermission. |
+| `AUTO_SCORES` | `true` | Track match scores using ET stopwatch rules. Active for **gather matches** (requires `auto_scores=true` in match data, BO3 termination enforced) and **ng matches** (always-on when no gather match is active, scores accumulate indefinitely). Embeds current score state into stats submissions as `metadata.scores`. Announces score in chat during intermission. |
 | `VERSION_CHECK` | `true` | Check `API_URL_VERSION` at startup and broadcast a chat warning if outdated |
 
 ### [AUTO-CONFIG MAP]
@@ -798,8 +1127,8 @@ Player count is taken from the registered gather roster (`alpha_team` + `beta_te
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `AUTO_START_WAIT_INITIAL` | `420` | Seconds before force-start on the first round of a match (map 1, round 1). **Simple mode only.** |
-| `AUTO_START_WAIT` | `180` | Seconds before force-start on all subsequent rounds. |
+| `AUTO_START_WAIT_INITIAL` | `300` | Seconds before force-start on the first round of a match (map 1, round 1). **Simple mode only.** |
+| `AUTO_START_WAIT` | `120` | Seconds before force-start on all subsequent rounds. |
 
 ### [AUTO-START PHASED MODE]
 
@@ -834,7 +1163,7 @@ silently ignored and the defaults above apply.
 | `STATS_API_URL_SUBMIT` | `API_URL_SUBMIT` |
 | `STATS_API_URL_MATCHID` | `API_URL_MATCHID` |
 | `STATS_API_URL_VERSION` | `API_URL_VERSION` |
-| `STATS_API_PATH` | `JSON_FILEPATH` — shared output dir for both the log file (`game_stats.log`) and JSON dumps |
+| `STATS_API_PATH` | `JSON_FILEPATH` — shared output dir for both the log file (`stats.log`) and JSON dumps |
 | `STATS_API_LOG_LEVEL` | `LOG_LEVEL` |
 | `STATS_API_LOG` | `LOGGING_ENABLED` (`"true"` / `"false"`) |
 | `STATS_API_GAMELOG` | `COLLECT_GAMELOG` |
@@ -842,6 +1171,9 @@ silently ignored and the defaults above apply.
 | `STATS_API_SHOVESTATS` | `COLLECT_SHOVE_STATS` |
 | `STATS_API_MOVEMENTSTATS` | `COLLECT_MOVEMENT_STATS` |
 | `STATS_API_STANCESTATS` | `COLLECT_STANCE_STATS` |
+| `STATS_API_VEHICLESTATS` | `COLLECT_VEHICLE_STATS` |
+| `STATS_API_VEHICLE_TELEMETRY` | `COLLECT_VEHICLE_TELEMETRY` |
+| `STATS_API_VEHICLE_DAMAGE` | `COLLECT_VEHICLE_DAMAGE` |
 | `STATS_API_WEAPON_FIRE` | `COLLECT_WEAPON_FIRE` |
 | `STATS_API_DUMPJSON` | `DUMP_STATS_DATA` |
 | `STATS_SUBMIT` | `SUBMIT_TO_API` |
@@ -894,7 +1226,8 @@ Each map is declared under `[maps.<mapname>]`. Supported sub-sections:
 | `buildables.<name>` | `enabled = true` | Marks a common buildable as present on this map |
 | `flags.<name>` | `flag_pattern`, `flag_coordinates` | Checkpoint / flag capture attribution |
 | `misc.<name>` | `misc_pattern`, `misc_coordinates` | Coordinate-based misc objective |
-| `escort.<name>` | `escort_pattern`, `escort_coordinates` | Coordinate-based vehicle escort event |
+| `escort.<name>` | `escort_pattern`, `escort_coordinates` | Escort finale detection: when the announce matching `escort_pattern` fires, a `vehicle_finale` event is emitted listing the owning-team players within the escort radius of `escort_coordinates` (falling back to the vehicle's position) |
+| `escort.<name>` | `script_name`, `team`, `radius` | Entity-state vehicle tracking (the presence of an `escort` section enables it for the map). The vehicle script_mover is pinned by `script_name`, or by `<name>` itself when omitted (`escort.tank` → scriptName `tank`). Optional: escorting `team` (defaults to `"allies"` — attackers own escort objectives on every map in rotation; set `"axis"` for the rare inverted map) and escort `radius` (default 500 units) |
 
 ---
 
@@ -1015,6 +1348,7 @@ luascripts/
     ├── util/
     │   ├── log.lua             timestamped file logger (info / debug levels)
     │   ├── http.lua            async/sync curl helpers
+    │   ├── pathgate.lua        vertex-preserving position sampling for path telemetry
     │   └── utils.lua           strip_colors, normalize, sanitize, distance, get_connected_players, …
     ├── config.lua              TOML loader
     ├── players.lua             GUID cache, get_snapshot(), class-switch detection
@@ -1022,6 +1356,7 @@ luascripts/
     ├── gamelog.lua             in-memory event buffer
     ├── events.lua              et_Obituary, et_Damage, et_ClientCommand
     ├── objectives.lua          et_Print pattern matching, buildables, flags, shoves
+    ├── vehicle.lua             entity-state escort vehicle tracking (auto-detect, escort credit, timeline)
     ├── gather.lua              gather features: auto_rename, auto_sort, auto_start, auto_scores
     ├── api.lua                 match-ID fetch, version check
     ├── scores.lua              match score tracking (gather + ng modes)

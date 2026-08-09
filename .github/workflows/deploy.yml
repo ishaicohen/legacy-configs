@@ -42,16 +42,4 @@ jobs:
           script: |
             cd /opt/etlegacy
             docker compose pull
-            docker compose up -d
-
-      - name: Restart public server (docker-compose.yml or config files changed)
-        if: github.event_name == 'push'
-        uses: appleboy/ssh-action@v1
-        with:
-          host: ${{ secrets.VM_HOST }}
-          username: ${{ secrets.VM_USER }}
-          key: ${{ secrets.VM_SSH_KEY }}
-          script: |
-            cd /opt/etlegacy
-            docker compose stop etl-server-public
-            docker compose up -d etl-server-public
+            docker compose down && docker compose up -d

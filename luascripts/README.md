@@ -12,6 +12,7 @@ payload to a configurable API endpoint at the end of every round.
 {
   "round_info":   { ... },
   "player_stats": { "<guid>": { ... } },
+  "spectators":   [ { ... } ],
   "metadata":     { ... },
   "gamelog":      [ { ... } ]
 }
@@ -58,12 +59,14 @@ Keyed by GUID. Each entry includes:
 | `rounds` | string | Rounds played |
 | `team` | string | Final team |
 | `weaponStats` | array | Raw weapon stat tokens (hits, atts, kills, deaths, headshots per weapon) |
+| `assists` | number | Engine kill assists (`sess.kill_assists`). Cumulative within a map like the other `sess` counters, so round 2 includes round 1 and consumers subtract. Omitted entirely on engine builds without the Lua binding (pre etlegacy#3570), which is not the same as `0`. |
 | `distance_travelled_meters` | number | Total distance (metres) |
 | `distance_travelled_spawn` | number | Distance travelled in first 3s after each spawn (total) |
 | `distance_travelled_spawn_avg` | number | Per-spawn average |
 | `spawn_count` | number | Number of spawns detected |
 | `player_speed` | object | `ups_avg`, `ups_peak`, `kph_avg`, `kph_peak`, `mph_avg`, `mph_peak` |
 | `stance_stats_seconds` | object | Seconds spent in each stance (see below) |
+| `activity_stats_seconds` | object | Engaged vs idle time (see below) |
 | `obj_planted` | object | `{ leveltime: { objective, timestamp_unix } }` |
 | `obj_defused` | object | Same |
 | `obj_destroyed` | object | Same |
@@ -109,6 +112,53 @@ Keyed by GUID. Each entry includes:
 | `in_sprint` | Seconds sprinting (stamina depleting) |
 | `in_turtle` | Seconds with zero stamina / full recovery (standing still) |
 | `is_downed` | Seconds in downed (revivable) state |
+
+**`activity_stats_seconds` fields:**
+
+Separates time spent *actively involved* from idle camping time. A trigger — using a
+weapon or tool, dealing damage, taking damage, or objective work — opens a **3-second
+sliding window**; the accumulator advances by the real frame delta while the window is
+open. Overlapping triggers extend one window rather than stacking, so a six-round burst
+costs one window, not six.
+
+Both clocks run only while the player is **alive** (not downed), the gamestate is
+`GS_PLAYING`, and the server is not paused, so `engaged <= alive` always holds and
+`engaged / alive` is the engaged-vs-idle ratio. Downed time is excluded from both and is
+reported separately as `stance_stats_seconds.is_downed`.
+
+| Field | Description |
+|-------|-------------|
+| `alive` | Seconds alive and playing — the denominator |
+| `engaged` | Seconds actively involved — the **union** of the first four windows below, not their sum |
+| `from_weapon` | Weapon or tool use, **including shots that miss**: bullets, grenades, syringe. Pliers count only while the engine confirms real work; knife and binoculars never count |
+| `from_dmg_dealt` | Damage dealt to another player |
+| `from_dmg_taken` | Damage taken from another player |
+| `from_objective` | Carrying an objective, pushing a moving escort vehicle, or an objective action (plant, defuse, repair, capture, shove) |
+| `from_support` | Dropping a medpack or ammo pack, or using adrenaline (2.10.0+). **Not part of `engaged`** |
+
+`engaged` is the **union** of the four combat and objective windows: it advances whenever
+any one of them is open. The `from_*` fields are **independent durations and therefore
+overlap**: each is the real time that source was live, so any one of the first four is
+`<= engaged`, but together they sum to *more* than `engaged`. A player who is carrying the
+objective while trading fire accrues in three of them at once.
+
+`from_support` runs on the same 3-second window but never opens `engaged`, so it can exceed
+it. Packs are cheap and repeatable, and a medic dropping them at their feet from cover is
+not engaging; before 2.10.0 they counted under `from_weapon` and inflated `engaged` for
+exactly that player.
+
+That means no percentage split is derivable from the breakdown — use `engaged / alive` for
+the ratio, and read each `from_*` on its own. The fields are directly comparable between
+players: if A shoots B for ten seconds, A's `from_dmg_dealt` and B's `from_dmg_taken` both
+reflect it, differing only where one of them was dead or downed (which is excluded from
+`alive` and so from every other field too).
+
+World damage (fall, drowning, burning, crushing) and self-inflicted splash open no window
+— a self-inflicted panzer already counted under `from_weapon` when the shot was fired.
+
+`from_weapon` counts every shot regardless of `COLLECT_WEAPON_FIRE`: that filter governs
+gamelog volume only, and its default excludes all hitscan weapons, so tying activity to it
+would leave a rifleman with `from_weapon = 0`. Gamelog output is unaffected.
 
 ### `metadata`
 
@@ -162,6 +212,35 @@ gather feature flags, and (when `AUTO_SCORES` is on) the current score state.
 | `winner_et` | number | ET team that won (1=axis, 2=allies) |
 | `alpha_side` | number | ET team alpha was playing as this round |
 | `fullhold` | boolean | True if `timelimit == nextTimeLimit` (defending team held full time) |
+
+---
+
+### `spectators`
+
+Everyone seen in a spectator slot during the round, so a cast nobody arranged in
+advance can still be credited and their stream checked. Omitted entirely when
+nobody watched.
+
+Accumulated across the round rather than sampled once: a cast usually ends
+before intermission does, and the engine puts every player into a spectator slot
+at intermission anyway, so a single late read would be mostly players and no
+casters.
+
+Players who spectate between spawns appear here too. **Filtering them out is the
+consumer's job**, against the match's own rosters rather than one round's: a
+player who fielded map 1 and spectated map 5 is a player, and only the
+match-level view can see both.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `guid` | string | Player GUID |
+| `name` | string | Name as last seen |
+| `first_seen` | number | Unix seconds, first seen in a spectator slot this round |
+| `last_seen` | number | Unix seconds, last seen |
+
+A snapshot of the same shape is also pushed once per map at
+`GS_WARMUP_COUNTDOWN` (see [`/matches/players/notify`](#player-notify)), which
+catches anyone present before round 1 who leaves before it ends.
 
 ---
 
@@ -637,6 +716,16 @@ interface StanceStatsSeconds {
   is_downed:       number;
 }
 
+interface ActivityStatsSeconds {
+  alive:          number;  // denominator: alive, playing, not paused
+  engaged:        number;  // union of the four windows below, not their sum
+  from_weapon:    number;  // weapon/tool use, misses included
+  from_dmg_dealt: number;
+  from_dmg_taken: number;
+  from_objective: number;  // carry, escort push, objective actions
+  from_support?:  number;  // 2.10.0+: medpack/ammo/adrenaline, NOT in engaged
+}
+
 /** Standard objective stat entry — keyed by leveltime (as string). */
 interface ObjStatEntry {
   objective:      string;
@@ -671,6 +760,13 @@ interface PlayerStat {
 
   // COLLECT_STANCE_STATS
   stance_stats_seconds?: StanceStatsSeconds;
+
+  // COLLECT_ACTIVITY_STATS
+  activity_stats_seconds?: ActivityStatsSeconds;
+
+  // Engine kill assists. Cumulative within a map; absent on builds without
+  // the sess.kill_assists binding (pre etlegacy#3570).
+  assists?: number;
 
   // COLLECT_OBJ_STATS
   obj_planted?:       ObjStatMap;
@@ -1064,6 +1160,34 @@ No other file needs to be edited.
 
 The match-ID endpoint is called as `GET {API_URL_MATCHID}/{server_ip}/{server_port}`.
 
+#### Player notify
+
+Once per map, on the `GS_WARMUP` to `GS_WARMUP_COUNTDOWN` transition, a snapshot
+of who is in the server is POSTed to `/matches/players/notify`, derived from
+`API_URL_SUBMIT`:
+
+```json
+{
+  "match_id": "…", "server_ip": "…", "server_port": "…",
+  "timestamp": 1758000000, "stats_version": "2.9.0",
+  "connected_players": [ { "guid": "…", "team": 1, "clientNum": 0 } ],
+  "spectators":        [ { "guid": "…", "name": "…", "first_seen": 0, "last_seen": 0 } ]
+}
+```
+
+Three things about it are deliberate:
+
+- **Countdown only.** Nothing is pushed during `GS_PLAYING`. This is the last
+  moment before the match at which anyone can be told, and the accumulated
+  spectator list rides the ordinary round submit afterwards for anyone who
+  connects once play has started.
+- **Fire and forget.** Backgrounded curl; no response is read and the frame
+  never waits. A push that fails is a snapshot nobody got.
+- **Requires a cached match id.** Skipped silently without one, since there is
+  nothing on the other end to attach it to. On a server with the gather
+  features off, that means the first push lands at the second map's countdown
+  rather than the first.
+
 ### [PATHS]
 
 | Variable | Default | Description |
@@ -1083,6 +1207,7 @@ The match-ID endpoint is called as `GET {API_URL_MATCHID}/{server_ip}/{server_po
 | `COLLECT_SHOVE_STATS` | `true` | Shove tracking in `player_stats` and `gamelog` |
 | `COLLECT_MOVEMENT_STATS` | `true` | Distance travelled and speed in `player_stats` |
 | `COLLECT_STANCE_STATS` | `true` | Stance-time breakdown in `player_stats` |
+| `COLLECT_ACTIVITY_STATS` | `true` | Engaged-vs-idle time breakdown in `player_stats` |
 | `COLLECT_VEHICLE_STATS` | `true` | Entity-state escort vehicle tracking: per-player escort credit (`player_stats.obj_vehicle.escort`) and `vehicle_*` timeline events in `gamelog`. Active only on maps with an `escort` config section — its entry names (or `script_name` keys) pin the vehicle script_movers; maps without one have no vehicle and are skipped entirely. |
 | `COLLECT_VEHICLE_TELEMETRY` | `true` | Path position samples for moving vehicles (`vehicle_pos`) and objective carriers (`carrier_pos`), enabling route replay. Sampled per frame; volume is independent of `sv_fps` in both cases. **Vehicles** emit only where the path turns — at or below one point per second (~200 events per escort round). **Carriers** additionally hold a 10 Hz floor while moving (2.7.2+), giving ~32 units between samples so carry distance is measured rather than estimated: expect roughly `10 x carry_seconds` per round (~2100 on the heaviest round measured, versus 423 under pure vertex gating), and 1 Hz while a carrier stands still. |
 | `COLLECT_VEHICLE_DAMAGE` | `true` | Per-player damage tracking for damageable objectives: `vehicle_damage` events + `player_stats.obj_vehicle.damage` / `.repairs` for vehicles, and `obj_damage` events for `ET_CONSTRUCTIBLE` objectives (command posts, breach walls, barriers). Corpse gibs and decorative breakables are filtered out; damage is clamped to remaining health. Trucks are not damageable and never emit these. |
@@ -1200,6 +1325,7 @@ silently ignored and the defaults above apply.
 | `STATS_API_SHOVESTATS` | `COLLECT_SHOVE_STATS` |
 | `STATS_API_MOVEMENTSTATS` | `COLLECT_MOVEMENT_STATS` |
 | `STATS_API_STANCESTATS` | `COLLECT_STANCE_STATS` |
+| `STATS_API_ACTIVITYSTATS` | `COLLECT_ACTIVITY_STATS` |
 | `STATS_API_VEHICLESTATS` | `COLLECT_VEHICLE_STATS` |
 | `STATS_API_VEHICLE_TELEMETRY` | `COLLECT_VEHICLE_TELEMETRY` |
 | `STATS_API_VEHICLE_DAMAGE` | `COLLECT_VEHICLE_DAMAGE` |

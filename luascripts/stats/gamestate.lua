@@ -7,6 +7,8 @@
 
 local gamestate = {}
 
+local utils     = require("luascripts/stats/util/utils")
+
 local log
 
 local players_ref
@@ -15,6 +17,7 @@ local gamelog_ref
 local events_ref
 local objectives_ref
 local vehicle_ref
+local activity_ref
 local gather_ref
 local api_ref
 local stats_ref
@@ -43,6 +46,7 @@ function gamestate.init(cfg, log_ref, all_modules)
     events_ref     = all_modules.events
     objectives_ref = all_modules.objectives
     vehicle_ref    = all_modules.vehicle
+    activity_ref   = all_modules.activity
     gather_ref     = all_modules.gather
     api_ref        = all_modules.api
     stats_ref      = all_modules.stats
@@ -59,6 +63,7 @@ function gamestate.reset(server_ip, server_port)
     if gamelog_ref    then gamelog_ref.reset()           end
     if events_ref     then events_ref.reset()            end
     if objectives_ref then objectives_ref.reset()        end
+    if activity_ref   then activity_ref.reset()          end
     if api_ref        then api_ref.reset()               end
     if stats_ref      then stats_ref.reset()             end
     if gather_ref     then gather_ref.reset()            end
@@ -97,6 +102,26 @@ function gamestate.handle_change(new_gs, server_ip, server_port, frame_time)
 
     -- fetch fresh data before round starts
     elseif new_gs == et.GS_WARMUP_COUNTDOWN and old_gs == et.GS_WARMUP then
+        -- Who is in the server as the countdown runs: the lineups, and anyone
+        -- sitting in a spectator slot. One snapshot, fire and forget, and only
+        -- here: a push during play is not wanted, and this is the last moment
+        -- before the match that anybody can be told about.
+        --
+        -- Independent of the gather features on purpose: a scheduled match is
+        -- exactly the case this exists for, and those servers run with
+        -- auto-start and auto-rename off.
+        if api_ref and api_ref.notify_players then
+            local match_id = (scores_ref and scores_ref.get_match_id())
+                          or api_ref.cached_match_id
+            if match_id and match_id ~= "" then
+                api_ref.notify_players(match_id,
+                    stats_ref and stats_ref.spectators() or nil,
+                    utils.get_connected_players())
+            elseif log then
+                log.debug("Countdown: no match id cached, player notify skipped")
+            end
+        end
+
         if gather_ref and gather_ref.is_auto_rename_enabled() then
             if log then log.write("Warmup countdown — fetching fresh team data") end
             local match_id = api_ref and api_ref.fetch_match_id()

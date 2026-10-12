@@ -70,7 +70,7 @@ services:
     volumes:
       - ./maps:/maps
     ports:
-      - '27971:27972/udp'
+      - '27972:27972/udp'
     stdin_open: true
     tty: true
     restart: unless-stopped

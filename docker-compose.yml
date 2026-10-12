@@ -37,7 +37,7 @@ services:
       - 'RCONPASSWORD=${GOYRCONPASSWORD}'
       - 'REFPASSWORD=${GOYREFPASSWORD}'
       - 'MAP_PORT=27970'
-      - 'ETLTV_NAME=^7Bra^3zz^7ers Studio Camera Man'
+      - 'ETLTV_NAME=^7Bra^3zz^7ers Studio'
       - 'ETLTV_PORT=27971'
       - 'ETLTV_PUBLIC=true'
       - 'ETLTV_MAXCLIENTS=24'

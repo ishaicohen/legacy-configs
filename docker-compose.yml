@@ -37,10 +37,20 @@ services:
       - 'RCONPASSWORD=${GOYRCONPASSWORD}'
       - 'REFPASSWORD=${GOYREFPASSWORD}'
       - 'MAP_PORT=27970'
+      - 'ETLTV_NAME=^7Bra^3zz^7ers Studio Camera Man'
+      - 'ETLTV_PORT=27971'
+      - 'ETLTV_PUBLIC=true'
+      - 'ETLTV_MAXCLIENTS=24'
+      - 'ETLTV_DELAY=0'
+      - 'ETLTV_IDLE_DETACH=120'
+      - 'ETLTV_UPLOAD_URL=https://api.etl.lol/api/v2/stats/etl/matches/stats/demo'
+      - 'ETLTV_UPLOAD_TOKEN=${GOYETLTV_UPLOAD_TOKEN}'
+      - 'ETLTV_AUTOSTART=true'
     volumes:
       - ./maps:/maps
     ports:
       - '27970:27970/udp'
+      - '27971:27971/udp'
     stdin_open: true
     tty: true
     restart: unless-stopped

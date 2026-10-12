@@ -66,11 +66,11 @@ services:
       - 'PASSWORD=${GOYPASSWORD}'
       - 'RCONPASSWORD=${GOYRCONPASSWORD}'
       - 'REFPASSWORD=${GOYREFPASSWORD}'
-      - 'MAP_PORT=27971'
+      - 'MAP_PORT=27972'
     volumes:
       - ./maps:/maps
     ports:
-      - '27971:27971/udp'
+      - '27971:27972/udp'
     stdin_open: true
     tty: true
     restart: unless-stopped

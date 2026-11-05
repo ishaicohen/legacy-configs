@@ -1,5 +1,5 @@
 local modname = "combinedfixes"
-local version = "1.2"
+local version = "1.3"
 
 -- ============================================================
 -- CONFIGURATION
@@ -85,6 +85,17 @@ local ENABLE_ETLTV  = true
 local ETLUTIL_PATH  = "/legacy/server/etlutil"
 
 -- [LOGGING]
+-- [GUID CHECK]
+-- For LAN cups. In warmup, once the number of players on the teams rises to one of
+-- GUID_CHECK_COUNTS, tells gibhub the GUIDs it has not told it about before.
+-- gibhub posts those it does not recognise to the organisers' Discord, so they can
+-- have the player upload their etkey. Inert unless enabled with a URL and a token.
+-- Fire and forget: the request runs in the background and the reply is never read.
+local ENABLE_GUID_CHECK     = false
+local GUID_CHECK_API_URL    = ""
+local GUID_CHECK_API_TOKEN  = ""
+local GUID_CHECK_COUNTS     = "6,12"
+
 -- Leave empty to auto-detect: <fs_homepath>/legacy/combinedfixes.log
 -- local LOG_FILEPATH = "/legacy/homepath/legacy/stats/game_stats.log"
 local LOG_FILEPATH = ""
@@ -111,6 +122,10 @@ ENABLE_COMMAND_LOGGING  = env_bool("CF_COMMAND_LOGGING",    ENABLE_COMMAND_LOGGI
 COMMAND_LOG_VOTES       = env_bool("CF_COMMAND_LOG_VOTES",  COMMAND_LOG_VOTES)
 COMMAND_LOG_REF         = env_bool("CF_COMMAND_LOG_REF",    COMMAND_LOG_REF)
 ENABLE_ETLTV            = env_bool("CF_ETLTV",              ENABLE_ETLTV)
+ENABLE_GUID_CHECK       = env_bool("CF_GUID_CHECK",         ENABLE_GUID_CHECK)
+GUID_CHECK_API_URL      = os.getenv("CF_GUID_CHECK_API_URL")            or GUID_CHECK_API_URL
+GUID_CHECK_API_TOKEN    = os.getenv("CF_GUID_CHECK_API_TOKEN")          or GUID_CHECK_API_TOKEN
+GUID_CHECK_COUNTS       = os.getenv("CF_GUID_CHECK_COUNTS")             or GUID_CHECK_COUNTS
 SPAWN_INVUL_SECONDS     = tonumber(os.getenv("CF_SPAWN_INVUL_SECONDS")) or SPAWN_INVUL_SECONDS
 BAN_REASON              = os.getenv("CF_BAN_REASON")                    or BAN_REASON
 LOG_FILEPATH            = os.getenv("CF_LOG_FILEPATH")                  or LOG_FILEPATH
@@ -458,152 +473,161 @@ local function saveLoad_clientCommand(clientNum, cmd)
 end
 
 -- ============================================================
--- MODULE: BOT MANAGER
+-- MODULE: GUID CHECK
 -- ============================================================
 
-local _botClients           = {}     -- [clientNum] = true(bot) / false(human)
-local _pendingKicks         = {}     -- [clientNum] = true when kick queued but not yet gone
-local _botManager_lastCheck = 0
-local _botManager_mapStart  = 0
-local _botManager_reset     = false  -- true once we've sent the post-grace reset
-local BOT_MANAGER_INTERVAL  = 30000  -- ms between adjustments
-local BOT_MANAGER_GRACE     = 15000  -- ms to wait after map start before first check
+local GUID_CHECK_POLL_MS   = 1000
+local GUID_CHECK_MAX_SEND  = 24   -- gibhub refuses more in one request
+local CON_CONNECTED        = 2
+local GS_WARMUP            = 2
 
-local function botManager_init(levelTime)
-    _botClients           = {}
-    _pendingKicks         = {}
-    _botManager_lastCheck = 0
-    _botManager_mapStart  = levelTime or 0
-    _botManager_reset     = false
+local _guidCheckSentPath   = nil  -- resolved in et_InitGame
+local _guidCheckSent       = {}   -- GUIDs gibhub was told about, loaded from the file
+local _guidCheckCounts     = {}   -- [n] = true, parsed from GUID_CHECK_COUNTS
+local _guidCheckLast       = 0    -- team players at the last poll
+local _guidCheckPollAt     = 0
+local _isBot               = {}   -- [clientNum] = true for a bot's slot
+
+local function guidCheck_active()
+    return ENABLE_GUID_CHECK and GUID_CHECK_API_URL ~= "" and GUID_CHECK_API_TOKEN ~= ""
 end
 
-local function botManager_clientConnect(clientNum, isBot)
-    local flag = (isBot == 1)
-    if not flag then
-        -- Fallback: Omnibot GUIDs always start with "OMNIBOT"
-        local userinfo = et.trap_GetUserinfo(clientNum)
-        local guid = et.Info_ValueForKey(userinfo, "cl_guid") or ""
-        flag = string.sub(guid, 1, 7) == "OMNIBOT"
-    end
-    _botClients[clientNum] = flag
-    local guid = et.Info_ValueForKey(et.trap_GetUserinfo(clientNum), "cl_guid") or ""
-    log(string.format("BOT_MANAGER connect client=%d isBot_param=%s guid=%s detected_bot=%s",
-        clientNum, tostring(isBot == 1), guid, tostring(flag)))
+local function shellQuote(str)
+    return "'" .. string.gsub(str, "'", "'\\''") .. "'"
 end
 
-local function botManager_clientDisconnect(clientNum)
-    _botClients[clientNum] = nil
-    _pendingKicks[clientNum] = nil
+-- A JSON string. Bytes outside ASCII become "?": names are not valid UTF-8.
+local function jsonString(str)
+    str = string.gsub(str, '[%c"\\\128-\255]', function(c)
+        if c == '"' then return '\\"' end
+        if c == "\\" then return "\\\\" end
+        return "?"
+    end)
+    return '"' .. str .. '"'
 end
 
-local function isBotSlot(clientNum)
-    return _botClients[clientNum] == true
+local function isBlankGuid(guid)
+    return guid == "" or guid == "NO_GUID" or guid == "UNKNOWN"
 end
 
-local function botManager_runFrame(levelTime)
-    if not ENABLE_BOT_MANAGER then return end
-    if levelTime - _botManager_mapStart < BOT_MANAGER_GRACE then return end
-
-    -- First tick after grace period: Omnibot is fully loaded.
-    if not _botManager_reset then
-        _botManager_reset = true
-
-        -- bot skill must fire after Omnibot loads; map default fires too early.
-        et.trap_SendConsoleCommand(et.EXEC_APPEND, "bot skill 2\n")
-
-        -- Reset min/max to full target unconditionally.
-        et.trap_SendConsoleCommand(et.EXEC_APPEND, string.format("bot minbots %d\n", BOT_MANAGER_TARGET))
-        et.trap_SendConsoleCommand(et.EXEC_APPEND, string.format("bot maxbots %d\n", BOT_MANAGER_TARGET))
-
-        -- Count bots to detect a short count left over from the previous map.
-        local maxClients  = tonumber(et.trap_Cvar_Get("sv_maxClients")) or 32
-        local totalBots   = 0
-        local totalHumans = 0
-        local firstBot    = nil
-        for clientNum = 0, maxClients - 1 do
-            local cs = et.trap_GetConfigstring(et.CS_PLAYERS + clientNum)
-            if cs and cs ~= "" then
-                local team = tonumber(et.gentity_get(clientNum, "sess.sessionTeam"))
-                if team == TEAM_AXIS or team == TEAM_ALLIES then
-                    if isBotSlot(clientNum) then
-                        totalBots = totalBots + 1
-                        if not firstBot then firstBot = clientNum end
-                    else
-                        totalHumans = totalHumans + 1
-                    end
-                end
-            end
-        end
-
-        log(string.format("BOT_MANAGER post-grace: skill=2 minbots/maxbots=%d bots=%d humans=%d",
-            BOT_MANAGER_TARGET, totalBots, totalHumans))
-
-        -- Omnibot only refills when triggered by an event (bot disconnect).
-        -- If bot count is short and no humans are playing, kick one bot so
-        -- Omnibot's refill logic fires and brings the count up to minbots.
-        if totalHumans == 0 and firstBot and totalBots < BOT_MANAGER_TARGET then
-            _pendingKicks[firstBot] = true
-            log(string.format("BOT_MANAGER post-grace nudge kick client %d (bots=%d < target=%d)",
-                firstBot, totalBots, BOT_MANAGER_TARGET))
-            et.trap_SendConsoleCommand(et.EXEC_APPEND, string.format("clientkick %d\n", firstBot))
-        end
-
-        _botManager_lastCheck = levelTime
-        return
-    end
-
-    if levelTime - _botManager_lastCheck < BOT_MANAGER_INTERVAL then return end
-    _botManager_lastCheck = levelTime
-
-    local maxClients   = tonumber(et.trap_Cvar_Get("sv_maxClients")) or 32
-    local humansByTeam = { [TEAM_AXIS] = 0, [TEAM_ALLIES] = 0 }
-    local botsByTeam   = { [TEAM_AXIS] = {}, [TEAM_ALLIES] = {} }
-
-    for clientNum = 0, maxClients - 1 do
-        local cs = et.trap_GetConfigstring(et.CS_PLAYERS + clientNum)
-        if cs and cs ~= "" then
-            local team = tonumber(et.gentity_get(clientNum, "sess.sessionTeam"))
+-- Real players on Axis or Allies, in client order, with a GUID worth reporting.
+local function guidCheck_teamPlayers()
+    local out = {}
+    local maxClients = tonumber(et.trap_Cvar_Get("sv_maxclients")) or 64
+    for i = 0, maxClients - 1 do
+        if et.gentity_get(i, "pers.connected") == CON_CONNECTED and not _isBot[i] then
+            local team = tonumber(et.gentity_get(i, "sess.sessionTeam"))
             if team == TEAM_AXIS or team == TEAM_ALLIES then
-                if isBotSlot(clientNum) then
-                    table.insert(botsByTeam[team], clientNum)
-                else
-                    humansByTeam[team] = humansByTeam[team] + 1
+                local userinfo = et.trap_GetUserinfo(i)
+                local guid     = string.upper(et.Info_ValueForKey(userinfo, "cl_guid") or "")
+                if not isBlankGuid(guid) then
+                    out[#out + 1] = { guid = guid, name = et.Info_ValueForKey(userinfo, "name") or "" }
                 end
             end
         end
     end
+    return out
+end
 
-    local halfTarget    = math.floor(BOT_MANAGER_TARGET / 2)
-    local desiredAxis   = math.max(0, halfTarget - humansByTeam[TEAM_AXIS])
-    local desiredAllies = math.max(0, halfTarget - humansByTeam[TEAM_ALLIES])
-    local desiredTotal  = desiredAxis + desiredAllies
-    local totalBots     = #botsByTeam[TEAM_AXIS] + #botsByTeam[TEAM_ALLIES]
-
-    log(string.format("BOT_MANAGER allies=%dh+%db axis=%dh+%db desired_bots=%d+%d",
-        humansByTeam[TEAM_ALLIES], #botsByTeam[TEAM_ALLIES],
-        humansByTeam[TEAM_AXIS],   #botsByTeam[TEAM_AXIS],
-        desiredAllies, desiredAxis))
-
-    -- Lower the floor BEFORE the ceiling, or the engine clamps maxbots back up.
-    -- Always send both so persisted minbots from a previous map can't block us.
-    et.trap_SendConsoleCommand(et.EXEC_APPEND, string.format("bot minbots %d\n", desiredTotal))
-    et.trap_SendConsoleCommand(et.EXEC_APPEND, string.format("bot maxbots %d\n", desiredTotal))
-
-    -- Kick excess bots from over-populated teams; skip any already pending removal
-    for _, team in ipairs({ TEAM_AXIS, TEAM_ALLIES }) do
-        local desired = (team == TEAM_AXIS) and desiredAxis or desiredAllies
-        local bots    = botsByTeam[team]
-        while #bots > desired do
-            local botNum = table.remove(bots)
-            if not _pendingKicks[botNum] then
-                _pendingKicks[botNum] = true
-                log(string.format("BOT_MANAGER kicking client %d (team %d)", botNum, team))
-                et.trap_SendConsoleCommand(et.EXEC_APPEND, string.format("clientkick %d\n", botNum))
-            end
-        end
+-- host:port the server is reached at. Never looked up on the public internet,
+-- which would block the game.
+local function guidCheck_address()
+    local host = os.getenv("MAP_IP")
+    if not host or host == "" then
+        host = et.trap_Cvar_Get("net_ip") or ""
+        if host == "0.0.0.0" then host = "" end
     end
+    if host == "" then return "" end
+    local port = os.getenv("MAP_PORT")
+    if not port or port == "" then port = et.trap_Cvar_Get("net_port") or "" end
+    if port == "" then return host end
+    return host .. ":" .. port
+end
 
-    -- minbots/maxbots already sent above; kicks follow the lowered ceiling.
+local function guidCheck_send(players)
+    local items = {}
+    for _, p in ipairs(players) do
+        items[#items + 1] = string.format('{"guid":%s,"name":%s}', jsonString(p.guid), jsonString(p.name))
+    end
+    local body = string.format('{"server":%s,"address":%s,"players":[%s]}',
+        jsonString(et.trap_Cvar_Get("sv_hostname") or ""), jsonString(guidCheck_address()), table.concat(items, ","))
+
+    local tmp = os.tmpname()
+    local f = io.open(tmp, "w")
+    if not f then
+        log("GUID check: could not write the request")
+        return false
+    end
+    f:write(body)
+    f:close()
+
+    local curl = string.format("curl --silent --output /dev/null --connect-timeout 2 --max-time 10 -X POST" ..
+        " -H 'Content-Type: application/json' -H %s --data-binary @%s %s",
+        shellQuote("Authorization: Bearer " .. GUID_CHECK_API_TOKEN), shellQuote(tmp), shellQuote(GUID_CHECK_API_URL))
+    -- A subshell in the background: the game does not wait, and the file goes when curl does.
+    os.execute(string.format("(%s ; rm -f %s) >/dev/null 2>&1 &", curl, shellQuote(tmp)))
+    return true
+end
+
+local function guidCheck_crossed(last, now)
+    for count in pairs(_guidCheckCounts) do
+        if last < count and count <= now then return true end
+    end
+    return false
+end
+
+local function guidCheck_runFrame(levelTime)
+    if not guidCheck_active() then return end
+    if levelTime - _guidCheckPollAt < GUID_CHECK_POLL_MS and levelTime >= _guidCheckPollAt then return end
+    _guidCheckPollAt = levelTime
+    -- Warmup only: a count reached at any other time sends nothing, its players
+    -- go with the next warmup's crossing.
+    if getGamestate() ~= GS_WARMUP then return end
+
+    local players = guidCheck_teamPlayers()
+    local last = _guidCheckLast
+    _guidCheckLast = #players
+    if not guidCheck_crossed(last, #players) then return end
+
+    local unsent = {}
+    for _, p in ipairs(players) do
+        if not _guidCheckSent[p.guid] and #unsent < GUID_CHECK_MAX_SEND then unsent[#unsent + 1] = p end
+    end
+    if #unsent == 0 then return end
+
+    -- Written before it is sent: a GUID is never sent twice, even if this fails.
+    local f = io.open(_guidCheckSentPath, "a")
+    if f then
+        for _, p in ipairs(unsent) do f:write(p.guid, "\n") end
+        f:close()
+    else
+        log("GUID check: could not record the GUIDs sent")
+    end
+    for _, p in ipairs(unsent) do _guidCheckSent[p.guid] = true end
+    if guidCheck_send(unsent) then
+        log(string.format("GUID check: sent %d player(s) at %d on the teams", #unsent, #players))
+    end
+end
+
+local function guidCheck_init()
+    _guidCheckLast, _guidCheckPollAt, _isBot = 0, 0, {}
+    _guidCheckCounts, _guidCheckSent = {}, {}
+    for item in string.gmatch(GUID_CHECK_COUNTS, "[^,]+") do
+        local n = tonumber(string.match(item, "^%s*(.-)%s*$"))
+        if n and n > 0 then _guidCheckCounts[n] = true end
+    end
+    if not guidCheck_active() then return end
+    -- The Lua VM restarts every map; the file lives as long as the box.
+    local homepath = et.trap_Cvar_Get("fs_homepath") or ""
+    _guidCheckSentPath = homepath .. "/legacy/combinedfixes_guidcheck.sent"
+    local f = io.open(_guidCheckSentPath, "r")
+    if f then
+        for line in f:lines() do
+            if line ~= "" then _guidCheckSent[line] = true end
+        end
+        f:close()
+    end
+    log("GUID check enabled, counts " .. GUID_CHECK_COUNTS)
 end
 
 function et_InitGame(levelTime, randomSeed, restart)
@@ -621,7 +645,7 @@ function et_InitGame(levelTime, randomSeed, restart)
     techPauseTeam = nil
     spawnInvul_init()
     saveLoad_init()
-    botManager_init(levelTime)
+    guidCheck_init()
     log("Initialized")
 end
 
@@ -686,7 +710,7 @@ local function etltv_consoleCommand(cmd)
 end
 
 function et_ClientConnect(clientNum, firstTime, isBot)
-    botManager_clientConnect(clientNum, isBot)
+    _isBot[clientNum] = isBot == 1
     return connBan_clientConnect(clientNum, firstTime, isBot)
 end
 
@@ -735,5 +759,5 @@ end
 
 function et_RunFrame(levelTime)
     pause_runFrame(levelTime)
-    botManager_runFrame(levelTime)
+    guidCheck_runFrame(levelTime)
 end
